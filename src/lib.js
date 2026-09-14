@@ -1,8 +1,9 @@
 /* ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್ — core logic (no UI) */
-import { WORDS, SENTENCES, DIALOGUES, CHALLENGES } from "./content.js";
+import { WORDS, SENTENCES, DIALOGUES, CHALLENGES, GRAMMAR, SUBHASHITAS, READINGS } from "./content.js";
 
 /* ── config ─────────────────────────────────────────────── */
-export const APP_URL = "https://ksm.kalpatharu.org"; // ಹೊಸ ವಿಳಾಸ ಬೇರೆ ಆದರೆ ಇಲ್ಲಿ ಬದಲಿಸಿ
+// ಈಗ ಆ್ಯಪ್ Netlify ನಲ್ಲಿ ಇದೆ. ksm.kalpatharu.org ಸಿದ್ಧವಾದಾಗ ಇಲ್ಲಿ ಬದಲಿಸಿ.
+export const APP_URL = "https://resonant-lolly-984bd2.netlify.app";
 export const WA_GROUP = "https://chat.whatsapp.com/Es2A3rScgTO1EHrQVgq2LP";
 export const SHOW_UNVERIFIED = true; // false ಮಾಡಿದರೆ VERIFIED ವಿಷಯ ಮಾತ್ರ ಕಾಣುತ್ತದೆ
 const KEY = "kalpatharu-sanskrit-v1"; // ಬದಲಿಸಬೇಡಿ — ಹಳೆಯ ಪ್ರಗತಿ ಇದಕ್ಕೇ ಕಟ್ಟಿದೆ
@@ -21,6 +22,7 @@ export const EMPTY = {
   name: "", onboarded: false,
   showDeva: true, fontStep: 1, contrast: false,
   learned: [], sentences: [], dialogues: [],
+  grammar: [], subhashitas: [], readings: [],   // ಹಂತ 4, 5, 6 — ಮುಗಿಸಿದ id ಗಳು
   srs: {},          // "w12" | "s5" → { lvl, due }
   mistakes: [],     // "w12" | "s5"
   xp: 0, streak: 0, lastDay: null,
@@ -70,6 +72,9 @@ const isReported = (s, kind, id) => s.reports.some((r) => r.kind === kind && r.i
 export const visWords = (s) => WORDS.filter((w) => okStatus(w) && !isReported(s, "w", w.id));
 export const visSents = (s) => SENTENCES.filter((x) => okStatus(x) && !isReported(s, "s", x.id));
 export const visDias = (s) => DIALOGUES.filter((x) => okStatus(x) && !isReported(s, "d", x.id));
+export const visGram = (s) => GRAMMAR.filter((x) => okStatus(x) && !isReported(s, "g", x.id));
+export const visSubh = (s) => SUBHASHITAS.filter((x) => okStatus(x) && !isReported(s, "u", x.id));
+export const visRead = (s) => READINGS.filter((x) => okStatus(x) && !isReported(s, "r", x.id));
 
 /* ── spaced repetition ──────────────────────────────────── */
 export const INTERVALS = [0, 1, 3, 7, 21];
@@ -122,10 +127,11 @@ export const shareLesson = (ws, s) => `${HEAD}\nಇಂದು ನಾನು ${ws.l
 export const shareBadge = (b, s) => `${HEAD}\nಹೊಸ ಸಾಧನೆ: ${b.t} 🏅\n(${b.d})\n\n— ${s.name} | 🔥 ${s.streak} ದಿನ\n${FOOT}`;
 export const shareChallenge = (c, s) => `${HEAD}\nಈ ವಾರದ ಸವಾಲು ಪೂರ್ಣಗೊಳಿಸಿದೆ ✅\n\n${c}\n\n— ${s.name} | 🔥 ${s.streak} ದಿನ\n${FOOT}`;
 export const shareFree = (prompt, s) => `${HEAD}\n${prompt}\n\n(ಇಲ್ಲಿ ಕನ್ನಡದಲ್ಲಿ ಬರೆಯಿರಿ)\n\n— ${s.name}\n${FOOT}`;
+export const shareSubhashita = (v, s) => `${HEAD}\nಇಂದಿನ ಸುಭಾಷಿತ:\n\n${v.lines.map((l) => l[0]).join("\n")}\n\n${v.lines.map((l) => l[1]).join("\n")}\n\n${v.m}\n(${v.from})\n\n${sig(s, "ಸುಭಾಷಿತ #" + pad3(v.id))}\n${FOOT}`;
 export const inviteText = (s) => `${HEAD}\nನಾನು ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲದಲ್ಲಿ ಸಂಸ್ಕೃತ ಕಲಿಯಲು ಶುರು ಮಾಡಿದ್ದೇನೆ.\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ ಸಾಕು. ನೀವೂ ಜೊತೆಗೆ ಕಲಿಯುತ್ತೀರಾ?\n\nಆ್ಯಪ್: ${APP_URL}\nಮಂಡಲಕ್ಕೆ ಸೇರಲು: ${WA_GROUP}\n\n— ${s.name}\n${FOOT}`;
 
 /* ── progress backup / transfer ─────────────────────────── */
-const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "schema"];
+const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "schema"];
 const b64u = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
 export function exportCode(s) {

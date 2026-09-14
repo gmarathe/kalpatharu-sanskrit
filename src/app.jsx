@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES } from "./content.js";
+import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES, GRAMMAR, SUBHASHITAS, READINGS } from "./content.js";
 import {
   EMPTY, load, save, migrate, dayNum, weekNum, pad3, pick, shuffle,
-  visWords, visSents, visDias, gradeItem, wordState, isDue, touch, usageOf,
-  challengeOfWeek, shareWord, shareSentence, shareLesson, shareBadge, shareChallenge, shareFree,
+  visWords, visSents, visDias, visGram, visSubh, visRead, gradeItem, wordState, isDue, touch, usageOf,
+  challengeOfWeek, shareWord, shareSentence, shareLesson, shareBadge, shareChallenge, shareFree, shareSubhashita,
   inviteText, exportCode, importCode, transferLink, WA_GROUP, APP_URL,
 } from "./lib.js";
 import {
   Btn, Header, Bar, ScriptCard, Parts, SrcLine, Quiz, FS,
-  wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable,
+  wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "2.0";
+const VERSION = "2.1";
 
 /* ── badges ─────────────────────────────────────────────── */
 const BADGES = [
@@ -24,6 +24,10 @@ const BADGES = [
   { id: "b7", t: "ಸಪ್ತದಿನಸಾಧನಾ", d: "7 ದಿನಗಳ ಸರಣಿ", g: (s) => s.streak >= 7 },
   { id: "b8", t: "ತ್ರಿಂಶದ್ದಿನಸಾಧನಾ", d: "30 ದಿನಗಳ ಸರಣಿ", g: (s) => s.streak >= 30 },
   { id: "b9", t: "ಪ್ರಥಮಸವಾಲು", d: "ಮೊದಲ ಸಪ್ತಾಹದ ಸವಾಲು", g: (s) => Object.values(s.challengeTicks).some((t) => t && t.every(Boolean)) },
+  { id: "b10", t: "ವ್ಯಾಕರಣಪ್ರವೇಶಃ", d: "ಮೊದಲ ವ್ಯಾಕರಣ ಪಾಠ", g: (s) => s.grammar.length >= 1 },
+  { id: "b11", t: "ಸುಭಾಷಿತಪ್ರಿಯಃ", d: "ಮೊದಲ ಸುಭಾಷಿತ", g: (s) => s.subhashitas.length >= 1 },
+  { id: "b12", t: "ವಾಚಕಃ", d: "ಮೊದಲ ವಾಚನ", g: (s) => s.readings.length >= 1 },
+  { id: "b13", t: "ದಶಸುಭಾಷಿತಾನಿ", d: "10 ಸುಭಾಷಿತಗಳು", g: (s) => s.subhashitas.length >= 10 },
 ];
 
 /* ═══════════════════ root ═══════════════════ */
@@ -149,6 +153,7 @@ function Home({ api, setTab }) {
   const w = words[dayNum() % words.length];
   const x = sents[dayNum() % sents.length];
   const next = words.find((v) => !s.learned.includes(v.id));
+  const U = visSubh(s), u = U.length ? U[dayNum() % U.length] : null, f = FS[s.fontStep];
   const due = dueItems(s);
   const wk = weekNum(), ch = challengeOfWeek();
   const ticks = s.challengeTicks[wk] || [false, false, false];
@@ -184,6 +189,17 @@ function Home({ api, setTab }) {
           onShare={() => api.share(shareWord(w, s))} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />}
         {x && <ScriptCard item={x} p={s} tag="ವಾಕ್ಯಮ್ — ಇಂದಿನ ವಾಕ್ಯ"
           onShare={() => api.share(shareSentence(x, s))} onReport={() => api.report("s", x.id, `ವಾಕ್ಯ: ${x.d}`)} />}
+        {u && (
+          <div className="card verse">
+            <div className="tag">ಸುಭಾಷಿತಮ್ — ಇಂದಿನ ಸುಭಾಷಿತ</div>
+            {s.showDeva && <div className="dev vdev" style={{ fontSize: 19 * f }}>{u.lines.map((l, i) => <div key={i}>{l[0]}</div>)}</div>}
+            <div className="kan vkan" style={{ fontSize: 18 * f }}>{u.lines.map((l, i) => <div key={i}>{l[1]}</div>)}</div>
+            <div className="mean" style={{ fontSize: 16 * f }}>{u.m}</div>
+            <div className="card-foot"><span className="src">{u.from}</span><span className="foot-acts">
+              <button type="button" className="link" onClick={() => api.share(shareSubhashita(u, s))}>ಹಂಚಿಕೊಳ್ಳಿ</button>
+              <button type="button" className="link" onClick={() => api.go({ kind: "subhashita", id: u.id })}>ಪದಚ್ಛೇದ</button></span></div>
+          </div>
+        )}
 
         <div className="card">
           <div className="sec-t">ಸಪ್ತಾಹದ ಸವಾಲು</div>
@@ -210,15 +226,15 @@ function dueItems(s) {
 /* ═══════════════════ learn path ═══════════════════ */
 function Learn({ api }) {
   const { s } = api;
-  const W = visWords(s), S = visSents(s), D = visDias(s);
+  const W = visWords(s), S = visSents(s), D = visDias(s), G = visGram(s), U = visSubh(s), R = visRead(s);
   const lv = [
     { n: 0, t: "ಹಂತ 0 — ಪರಿಚಯ", d: "ಅಕ್ಷರ ಮತ್ತು ಉಚ್ಚಾರಣೆ", k: "l0", pr: s.l0done ? "ಮುಗಿದಿದೆ ✓" : "ಬಿಡಬಹುದು" },
     { n: 1, t: "ಹಂತ 1 — ಪ್ರಥಮಪದಾನಿ", d: `${W.length} ಪದಗಳು`, k: "l1", pr: `${s.learned.length} / ${W.length}` },
     { n: 2, t: "ಹಂತ 2 — ಸರಳವಾಕ್ಯಾನಿ", d: `${S.length} ವಾಕ್ಯಗಳು`, k: "l2", pr: `${s.sentences.length} / ${S.length}` },
     { n: 3, t: "ಹಂತ 3 — ಸಂವಾದಃ", d: `${D.length} ಸಂಭಾಷಣೆಗಳು`, k: "l3", pr: `${s.dialogues.length} / ${D.length}` },
-    { n: 4, t: "ಹಂತ 4 — ಸರಳವ್ಯಾಕರಣಮ್", lock: true },
-    { n: 5, t: "ಹಂತ 5 — ಸುಭಾಷಿತಮ್", lock: true },
-    { n: 6, t: "ಹಂತ 6 — ವಾಚನಮ್", lock: true },
+    { n: 4, t: "ಹಂತ 4 — ಸರಳವ್ಯಾಕರಣಮ್", d: `${G.length} ಪಾಠಗಳು`, k: "l4", pr: `${s.grammar.length} / ${G.length}` },
+    { n: 5, t: "ಹಂತ 5 — ಸುಭಾಷಿತಮ್", d: `${U.length} ಸುಭಾಷಿತಗಳು`, k: "l5", pr: `${s.subhashitas.length} / ${U.length}` },
+    { n: 6, t: "ಹಂತ 6 — ವಾಚನಮ್", d: `${R.length} ವಾಚನಗಳು`, k: "l6", pr: `${s.readings.length} / ${R.length}` },
   ];
   return (
     <>
@@ -469,7 +485,7 @@ function Dialogue({ api, id }) {
   const done = s.dialogues.includes(d.id);
   return (
     <>
-      <Header title={d.t} sub="ಪ್ರತಿ ಸಾಲನ್ನೂ ಗಟ್ಟಿಯಾಗಿ ಹೇಳಿ" onBack={api.close} />
+      <Header title={d.t} sub="ಪ್ರತಿ ಸಾಲನ್ನೂ ಗಟ್ಟಿಯಾಗಿ ಹೇಳಿ" onBack={() => api.go({ kind: "l3" })} />
       <div className="pad">
         {d.lines.map(([sp, dv, kn, mn], i) => (
           <div key={i} className={`bubble ${sp === "ಅ" ? "l" : "r"}`}>
@@ -483,6 +499,195 @@ function Dialogue({ api, id }) {
         {!done && <Btn wide onClick={() => api.update((st) => touch({ ...st, dialogues: [...st.dialogues, d.id], xp: st.xp + 10 }))}>ಕಲಿತೆ</Btn>}
         {done && <div className="muted center">ಕಲಿತಿದ್ದೀರಿ ✓</div>}
         <Btn wide kind="line" onClick={() => setQuiz(d.lines.slice(0, -1).map((_, i) => nextLineQ(d, i, visDias(s))))}>ಸಂವಾದ ಅಭ್ಯಾಸ</Btn>
+      </div>
+    </>
+  );
+}
+
+/* ── level 4: grammar ── */
+function Level4({ api }) {
+  const { s } = api;
+  const G = visGram(s);
+  return (
+    <>
+      <Header title="ಹಂತ 4 — ಸರಳವ್ಯಾಕರಣಮ್" sub="ಒಂದೊಂದು ನಿಯಮ, ಉದಾಹರಣೆ, ಅಭ್ಯಾಸ" onBack={api.close} />
+      <div className="pad">
+        {G.map((g) => (
+          <button type="button" key={g.id} className="card lvl" onClick={() => api.go({ kind: "grammar", id: g.id })}>
+            <span className="lvl-n">{g.id}</span>
+            <span className="lvl-b"><b>{g.t}</b>{s.showDeva && <span className="muted dev">{g.d}</span>}</span>
+            <span className="lvl-p">{s.grammar.includes(g.id) ? "✓" : ""}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function GrammarLesson({ api, id }) {
+  const { s } = api;
+  const g = GRAMMAR.find((x) => x.id === id);
+  const [quiz, setQuiz] = useState(null);
+  const [res, setRes] = useState(null);
+  const f = FS[s.fontStep];
+  if (!g) return <><Header title="ವ್ಯಾಕರಣ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ಪಾಠ ಸಿಗಲಿಲ್ಲ.</p></div></>;
+  if (res) return <Done api={api} title="ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
+  if (quiz) return <Quiz qs={quiz} p={s} title={g.t} onBack={() => setQuiz(null)} onGrade={() => {}}
+    onFinish={(sc, t) => { api.update((st) => touch({ ...st, grammar: st.grammar.includes(g.id) ? st.grammar : [...st.grammar, g.id], xp: st.xp + sc + 5 })); setRes({ s: sc, t }); }} />;
+  const done = s.grammar.includes(g.id);
+  return (
+    <>
+      <Header title={g.t} sub={s.showDeva ? g.d : undefined} onBack={() => api.go({ kind: "l4" })} />
+      <div className="pad">
+        {g.intro.map((p, i) => <p key={i} className="lead">{p}</p>)}
+        <div className="sec-t">ಉದಾಹರಣೆಗಳು</div>
+        <div className="card gtable">
+          {g.rows.map((r, i) => (
+            <div key={i} className="grow">
+              {r[0] && <span className="glabel">{r[0]}</span>}
+              {s.showDeva && <span className="dev" style={{ fontSize: 19 * f }}>{r[1]}</span>}
+              <span className="kan" style={{ fontSize: 18 * f }}>{r[2]}</span>
+              <span className="mean" style={{ fontSize: 15 * f, marginTop: 0 }}>{r[3]}</span>
+            </div>
+          ))}
+        </div>
+        {g.tip && <div className="tip">💡 {g.tip}</div>}
+        <div className="card-foot"><SrcLine item={g} /><button type="button" className="link warn" onClick={() => api.report("g", g.id, `ವ್ಯಾಕರಣ: ${g.t}`)}>ತಪ್ಪು ತಿಳಿಸಿ</button></div>
+        <Btn wide onClick={() => setQuiz(shuffle(g.qs).map((q) => grammarQ(q, s.showDeva)))}>ಅಭ್ಯಾಸ ({g.qs.length} ಪ್ರಶ್ನೆ)</Btn>
+        {done && <div className="muted center">ಮುಗಿದಿದೆ ✓</div>}
+      </div>
+    </>
+  );
+}
+
+/* ── level 5: subhashitas ── */
+function Level5({ api }) {
+  const { s } = api;
+  const U = visSubh(s);
+  const learned = U.filter((v) => s.subhashitas.includes(v.id));
+  return (
+    <>
+      <Header title="ಹಂತ 5 — ಸುಭಾಷಿತಮ್" sub="ಒಂದು ಶ್ಲೋಕ, ಒಂದು ಜೀವನಪಾಠ" onBack={api.close} />
+      <div className="pad">
+        {learned.length >= 2 && <Btn wide onClick={() => api.go({ kind: "uquiz" })}>ಸುಭಾಷಿತ ಅಭ್ಯಾಸ</Btn>}
+        {U.map((v) => (
+          <button type="button" key={v.id} className="card lvl" onClick={() => api.go({ kind: "subhashita", id: v.id })}>
+            <span className="lvl-n">{v.id}</span>
+            <span className="lvl-b"><b>{v.t}</b><span className="muted">{v.lines[0][1]} …</span></span>
+            <span className="lvl-p">{s.subhashitas.includes(v.id) ? "✓" : ""}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function Subhashita({ api, id }) {
+  const { s } = api;
+  const v = SUBHASHITAS.find((x) => x.id === id);
+  const [showParts, setShowParts] = useState(false);
+  const f = FS[s.fontStep];
+  if (!v) return <><Header title="ಸುಭಾಷಿತ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ಸುಭಾಷಿತ ಸಿಗಲಿಲ್ಲ.</p></div></>;
+  const done = s.subhashitas.includes(v.id);
+  const mark = () => api.update((st) => touch(st.subhashitas.includes(v.id) ? st : { ...st, subhashitas: [...st.subhashitas, v.id], xp: st.xp + 8 }));
+  return (
+    <>
+      <Header title={v.t} sub={`ಸುಭಾಷಿತ #${pad3(v.id)} · ${v.from}`} onBack={() => api.go({ kind: "l5" })} />
+      <div className="pad">
+        <div className="card verse">
+          {s.showDeva && <div className="dev vdev" style={{ fontSize: 22 * f }}>{v.lines.map((l, i) => <div key={i}>{l[0]}</div>)}</div>}
+          <div className="kan vkan" style={{ fontSize: 20 * f }}>{v.lines.map((l, i) => <div key={i}>{l[1]}</div>)}</div>
+          <div className="mean" style={{ fontSize: 17 * f }}>{v.m}</div>
+          <div className="card-foot"><SrcLine item={v} /><span className="foot-acts">
+            <button type="button" className="link" onClick={() => api.share(shareSubhashita(v, s))}>ಹಂಚಿಕೊಳ್ಳಿ</button>
+            <button type="button" className="link warn" onClick={() => api.report("u", v.id, `ಸುಭಾಷಿತ: ${v.lines[0][0]}`)}>ತಪ್ಪು ತಿಳಿಸಿ</button></span></div>
+        </div>
+        <div className="card say"><b>ಹೇಳಿ</b><p>ಪ್ರತಿ ಸಾಲನ್ನು ಗಟ್ಟಿಯಾಗಿ ಎರಡು ಬಾರಿ ಹೇಳಿ. ನಂತರ ಅರ್ಥವನ್ನು ನಿಮ್ಮ ಮಾತಿನಲ್ಲಿ ಹೇಳಿ.</p></div>
+        <Btn wide kind="line" onClick={() => setShowParts(!showParts)}>{showParts ? "ಪದಚ್ಛೇದ ಮುಚ್ಚಿ" : "ಪದಚ್ಛೇದ ನೋಡಿ"}</Btn>
+        {showParts && (
+          <div className="card"><div className="parts" style={{ borderTop: 0, marginTop: 0, paddingTop: 0 }}>
+            <div className="parts-h">ಪದಚ್ಛೇದ</div>
+            {v.parts.map(([dv, mn], i) => <div key={i} className="part"><span className="dev">{dv}</span><span className="part-m">{mn}</span></div>)}
+          </div></div>
+        )}
+        {!done ? <Btn wide onClick={mark}>ಕಂಠಪಾಠವಾಯಿತು</Btn> : <div className="muted center">ಕಲಿತಿದ್ದೀರಿ ✓</div>}
+      </div>
+    </>
+  );
+}
+
+function SubhashitaQuiz({ api }) {
+  const { s } = api;
+  const [res, setRes] = useState(null);
+  const qs = useMemo(() => {
+    const U = visSubh(s);
+    const mine = U.filter((v) => s.subhashitas.includes(v.id));
+    return shuffle(pick(mine, 6).flatMap((v, i) => [subhFillQ(v, U, s.showDeva), ...(i < 3 ? [gistQ(v, U)] : [])]));
+  }, []);
+  if (res || !qs.length) return <Done api={api} title="ಸುಭಾಷಿತ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={res ? `${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.` : "ಮೊದಲು ಕೆಲವು ಸುಭಾಷಿತ ಕಲಿಯಿರಿ."} />;
+  return <Quiz qs={qs} p={s} title="ಸುಭಾಷಿತ ಅಭ್ಯಾಸ" onBack={api.close} onGrade={() => {}}
+    onFinish={(sc, t) => { api.update((st) => touch({ ...st, xp: st.xp + sc })); setRes({ s: sc, t }); }} />;
+}
+
+/* ── level 6: readings ── */
+function Level6({ api }) {
+  const { s } = api;
+  const R = visRead(s);
+  return (
+    <>
+      <Header title="ಹಂತ 6 — ವಾಚನಮ್" sub="ಸರಳ ಗದ್ಯ — ಓದಿ, ಅರ್ಥ ಮಾಡಿಕೊಳ್ಳಿ" onBack={api.close} />
+      <div className="pad">
+        {R.map((r) => (
+          <button type="button" key={r.id} className="card lvl" onClick={() => api.go({ kind: "reading", id: r.id })}>
+            <span className="lvl-n">{r.id}</span>
+            <span className="lvl-b"><b>{r.t}</b><span className="muted">{r.lines.length} ವಾಕ್ಯಗಳು · {r.words.length} ಹೊಸ ಪದ</span></span>
+            <span className="lvl-p">{s.readings.includes(r.id) ? "✓" : ""}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function Reading({ api, id }) {
+  const { s } = api;
+  const r = READINGS.find((x) => x.id === id);
+  const [open, setOpen] = useState({});
+  const [all, setAll] = useState(false);
+  const [quiz, setQuiz] = useState(null);
+  const [res, setRes] = useState(null);
+  const f = FS[s.fontStep];
+  if (!r) return <><Header title="ವಾಚನ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ವಾಚನ ಸಿಗಲಿಲ್ಲ.</p></div></>;
+  if (res) return <Done api={api} title="ವಾಚನ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
+  if (quiz) return <Quiz qs={quiz} p={s} title={r.t} onBack={() => setQuiz(null)} onGrade={() => {}}
+    onFinish={(sc, t) => { api.update((st) => touch({ ...st, readings: st.readings.includes(r.id) ? st.readings : [...st.readings, r.id], xp: st.xp + sc + 5 })); setRes({ s: sc, t }); }} />;
+  const done = s.readings.includes(r.id);
+  return (
+    <>
+      <Header title={r.t} sub="ವಾಕ್ಯ ಒತ್ತಿದರೆ ಅರ್ಥ ಕಾಣುತ್ತದೆ" onBack={() => api.go({ kind: "l6" })} />
+      <div className="pad">
+        <Btn small kind="line" onClick={() => setAll(!all)}>{all ? "ಅರ್ಥ ಮುಚ್ಚಿ" : "ಎಲ್ಲಾ ಅರ್ಥ ತೋರಿಸು"}</Btn>
+        <div className="card passage">
+          {r.lines.map(([dv, kn, mn], i) => {
+            const show = all || !!open[i];
+            return (
+              <button type="button" key={i} className={`rline${show ? " on" : ""}`} aria-expanded={show} onClick={() => setOpen({ ...open, [i]: !open[i] })}>
+                {s.showDeva && <span className="dev" style={{ fontSize: 21 * f }}>{dv}</span>}
+                <span className="kan" style={{ fontSize: 19 * f }}>{kn}</span>
+                {show && <span className="mean" style={{ fontSize: 16 * f }}>{mn}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="sec-t">ಹೊಸ ಪದಗಳು</div>
+        <div className="card gtable">
+          {r.words.map(([dv, kn, mn], i) => (
+            <div key={i} className="grow">{s.showDeva && <span className="dev">{dv}</span>}<span className="kan">{kn}</span><span className="mean" style={{ marginTop: 0 }}>{mn}</span></div>
+          ))}
+        </div>
+        <div className="card-foot"><SrcLine item={r} /><button type="button" className="link warn" onClick={() => api.report("r", r.id, `ವಾಚನ: ${r.t}`)}>ತಪ್ಪು ತಿಳಿಸಿ</button></div>
+        <Btn wide onClick={() => setQuiz(r.qs.map(readQ))}>ಗ್ರಹಿಕೆಯ ಪ್ರಶ್ನೆಗಳು ({r.qs.length})</Btn>
+        {done && <div className="muted center">ಮುಗಿದಿದೆ ✓</div>}
       </div>
     </>
   );
@@ -506,6 +711,7 @@ function Practice({ api }) {
         <Btn wide kind="line" disabled={s.sentences.length < 2} onClick={() => api.go({ kind: "squiz" })}>ವಾಕ್ಯ ಅಭ್ಯಾಸ</Btn>
         <Btn wide kind="line" disabled={!s.learned.length} onClick={() => api.go({ kind: "flash" })}>ಫ್ಲ್ಯಾಶ್ ಕಾರ್ಡ್</Btn>
         <Btn wide kind="line" disabled={!s.mistakes.length} onClick={() => api.go({ kind: "review", mistakes: true })}>ತಪ್ಪುಗಳ ಪುಸ್ತಕ ({s.mistakes.length})</Btn>
+        <Btn wide kind="line" disabled={s.subhashitas.length < 2} onClick={() => api.go({ kind: "uquiz" })}>ಸುಭಾಷಿತ ಅಭ್ಯಾಸ</Btn>
         <div className="card">
           <div className="sec-t">ಶಬ್ದಕೋಶ</div>
           <p className="muted">ಕನ್ನಡ ಅಥವಾ ಸಂಸ್ಕೃತ — ಯಾವ ಪದವನ್ನಾದರೂ ಹುಡುಕಿ.</p>
@@ -567,15 +773,16 @@ function Search({ api }) {
   const { s } = api;
   const [q, setQ] = useState("");
   const t = q.trim().toLowerCase();
-  const W = visWords(s), S = visSents(s);
+  const W = visWords(s), S = visSents(s), U = visSubh(s);
   const hw = t ? W.filter((w) => (w.k + " " + w.d + " " + w.m).toLowerCase().includes(t)).slice(0, 15) : [];
   const hs = t ? S.filter((x) => (x.k + " " + x.d + " " + x.m).toLowerCase().includes(t)).slice(0, 10) : [];
+  const hu = t ? U.filter((v) => (v.lines.map((l) => l[0] + " " + l[1]).join(" ") + " " + v.m + " " + v.t).toLowerCase().includes(t)).slice(0, 5) : [];
   return (
     <>
       <Header title="ಶಬ್ದಕೋಶ" sub="ಕನ್ನಡ ಅಥವಾ ಸಂಸ್ಕೃತ ಪದ ಬರೆಯಿರಿ" onBack={api.close} />
       <div className="pad">
         <input className="input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="ಉದಾ: ನೀರು" aria-label="ಹುಡುಕಿ" />
-        {t && !hw.length && !hs.length && <p className="muted">ಈ ಪದ ಇನ್ನೂ ಶಬ್ದಕೋಶದಲ್ಲಿ ಇಲ್ಲ. ಪಾಠಗಳು ಬೆಳೆದಂತೆ ಸೇರುತ್ತದೆ.</p>}
+        {t && !hw.length && !hs.length && !hu.length && <p className="muted">ಈ ಪದ ಇನ್ನೂ ಶಬ್ದಕೋಶದಲ್ಲಿ ಇಲ್ಲ. ಪಾಠಗಳು ಬೆಳೆದಂತೆ ಸೇರುತ್ತದೆ.</p>}
         {hw.map((w) => {
           const u = usageOf(w, S);
           return (
@@ -586,6 +793,13 @@ function Search({ api }) {
         })}
         {hs.length > 0 && <div className="sec-t">ವಾಕ್ಯಗಳು</div>}
         {hs.map((x) => <ScriptCard key={x.id} compact item={x} p={s} tag={`ವಾಕ್ಯ #${pad3(x.id)}`} onReport={() => api.report("s", x.id, `ವಾಕ್ಯ: ${x.d}`)} />)}
+        {hu.length > 0 && <div className="sec-t">ಸುಭಾಷಿತಗಳು</div>}
+        {hu.map((v) => (
+          <button type="button" key={v.id} className="card lvl" onClick={() => api.go({ kind: "subhashita", id: v.id })}>
+            <span className="lvl-n">{v.id}</span>
+            <span className="lvl-b"><b>{v.t}</b><span className="muted">{v.lines[0][1]} …</span></span>
+          </button>
+        ))}
       </div>
     </>
   );
@@ -594,12 +808,13 @@ function Search({ api }) {
 /* ═══════════════════ circle ═══════════════════ */
 function Circle({ api }) {
   const { s } = api;
-  const W = visWords(s), S = visSents(s);
-  const w = W[dayNum() % W.length], x = S[dayNum() % S.length];
+  const W = visWords(s), S = visSents(s), U = visSubh(s);
+  const w = W.length ? W[dayNum() % W.length] : null, x = S.length ? S[dayNum() % S.length] : null, u = U.length ? U[dayNum() % U.length] : null;
   const lastBadge = BADGES.find((b) => b.id === s.badges[s.badges.length - 1]);
   const prompts = [
-    { p: "ಇಂದು ಕಲಿತ ಪದವನ್ನು ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಿ.", t: () => shareWord(w, s) },
-    { p: "ಇಂದಿನ ವಾಕ್ಯವನ್ನು ಹಂಚಿಕೊಳ್ಳಿ.", t: () => shareSentence(x, s) },
+    ...(w ? [{ p: "ಇಂದು ಕಲಿತ ಪದವನ್ನು ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಿ.", t: () => shareWord(w, s) }] : []),
+    ...(x ? [{ p: "ಇಂದಿನ ವಾಕ್ಯವನ್ನು ಹಂಚಿಕೊಳ್ಳಿ.", t: () => shareSentence(x, s) }] : []),
+    ...(u ? [{ p: "ಇಂದಿನ ಸುಭಾಷಿತವನ್ನು ಹಂಚಿಕೊಳ್ಳಿ.", t: () => shareSubhashita(u, s) }] : []),
     { p: "ಇಂದು ಸಂಸ್ಕೃತವನ್ನು ಎಲ್ಲಿ ಬಳಸಿದಿರಿ? ಕನ್ನಡದಲ್ಲಿ ಬರೆದು ಹಂಚಿಕೊಳ್ಳಿ.", t: () => shareFree("ಇಂದು ನಾನು ಸಂಸ್ಕೃತವನ್ನು ಬಳಸಿದ್ದು:", s) },
     { p: "ಯಾವ ಪದ ಕಷ್ಟವಾಯಿತು? ಕನ್ನಡದಲ್ಲಿ ಕೇಳಿ.", t: () => shareFree("ನನಗೆ ಕಷ್ಟವಾದ ಪದ / ನನ್ನ ಪ್ರಶ್ನೆ:", s) },
     ...(lastBadge ? [{ p: "ನಿಮ್ಮ ಸಾಧನೆಯ ಬ್ಯಾಡ್ಜ್ ಹಂಚಿಕೊಳ್ಳಿ.", t: () => shareBadge(lastBadge, s) }] : []),
@@ -640,6 +855,10 @@ function Me({ api }) {
       <div className="pad">
         <div className="card stats">
           {[[s.learned.length, "ಕಲಿತ ಪದಗಳು"], [s.sentences.length, "ಕಲಿತ ವಾಕ್ಯಗಳು"], [s.dialogues.length, "ಸಂಭಾಷಣೆಗಳು"], [`🔥 ${s.streak}`, "ಸರಣಿ"], [`⭐ ${s.xp}`, "ಅಂಕ"]]
+            .map(([v, l]) => <div key={l} className="stat"><b>{v}</b><span>{l}</span></div>)}
+        </div>
+        <div className="card stats">
+          {[[s.grammar.length, "ವ್ಯಾಕರಣ ಪಾಠಗಳು"], [s.subhashitas.length, "ಸುಭಾಷಿತಗಳು"], [s.readings.length, "ವಾಚನಗಳು"], [s.badges.length, "ಸಾಧನೆಗಳು"]]
             .map(([v, l]) => <div key={l} className="stat"><b>{v}</b><span>{l}</span></div>)}
         </div>
 
@@ -731,6 +950,7 @@ function ReportSheet({ r, close, api }) {
   const send = () => {
     api.update((st) => ({ ...st, reports: [...st.reports, { ...r, note: note.trim() || undefined, on: new Date().toISOString().slice(0, 10) }] }));
     close();
+    if ("durg".includes(r.kind)) api.close(); // full-screen item just got hidden — leave it
     api.flash("ತಿಳಿಸಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದ. ಪರಿಶೀಲಿಸುತ್ತೇವೆ 🙏");
   };
   return (
@@ -754,6 +974,9 @@ function mergeState(a, b) {
     learned: [...new Set([...a.learned, ...b.learned])],
     sentences: [...new Set([...a.sentences, ...b.sentences])],
     dialogues: [...new Set([...a.dialogues, ...b.dialogues])],
+    grammar: [...new Set([...a.grammar, ...(b.grammar || [])])],
+    subhashitas: [...new Set([...a.subhashitas, ...(b.subhashitas || [])])],
+    readings: [...new Set([...a.readings, ...(b.readings || [])])],
     badges: [...new Set([...a.badges, ...b.badges])],
     mistakes: [...new Set([...a.mistakes, ...b.mistakes])],
     reports: [...a.reports, ...b.reports.filter((r) => !a.reports.some((x) => x.kind === r.kind && x.id === r.id))],
@@ -788,4 +1011,8 @@ function Nav({ tab, setTab }) {
   );
 }
 
-const VIEWS = { l0: Level0, l1: Level1, lesson: Lesson, l2: Level2, squiz: SentenceQuiz, l3: Level3, dialogue: Dialogue, review: Review, flash: Flash, search: Search };
+const VIEWS = {
+  l0: Level0, l1: Level1, lesson: Lesson, l2: Level2, squiz: SentenceQuiz, l3: Level3, dialogue: Dialogue,
+  l4: Level4, grammar: GrammarLesson, l5: Level5, subhashita: Subhashita, uquiz: SubhashitaQuiz, l6: Level6, reading: Reading,
+  review: Review, flash: Flash, search: Search,
+};

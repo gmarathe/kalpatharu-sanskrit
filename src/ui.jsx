@@ -128,6 +128,39 @@ export function letterQ(pair, all) {
   return { type: "mcq", ask: "ಕನ್ನಡ ಲಿಪಿಯಲ್ಲಿ ಇದು ಯಾವ ಅಕ್ಷರ?", prompt: pair[0], dev: true, answer: pair[1], options: shuffle([pair[1], ...others.map((o) => o[1])]) };
 }
 
+/* ── ಹಂತ 4, 5, 6 ರ ಪ್ರಶ್ನೆಗಳು ── */
+// option label: Kannada script, plus Devanagari when the learner shows it
+const both = (d, k, showDeva) => (showDeva && d && d !== k ? `${k}  ${d}` : k);
+export function grammarQ(q, showDeva) {
+  const opts = q.o.map(([d, k]) => both(d, k, showDeva));
+  return { type: "mcq", small: true, ask: "ಸರಿಯಾದ ರೂಪ ಆರಿಸಿ", prompt: q.k, promptDev: showDeva ? q.q : null, sub: q.h, answer: opts[0], options: shuffle(opts) };
+}
+const vtoks = (t) => t.replace(/[।॥]/g, "").trim().split(/\s+/);
+// blank one word of one pada; distractors from other verses
+export function subhFillQ(v, all, showDeva) {
+  const li = Math.floor(Math.random() * v.lines.length);
+  const dt = vtoks(v.lines[li][0]), kt = vtoks(v.lines[li][1]);
+  const aligned = dt.length === kt.length;
+  const cands = kt.map((_, i) => i).filter((i) => kt[i].length > 2);
+  const bi = cands[Math.floor(Math.random() * cands.length)] ?? 0;
+  const pool = [];
+  all.forEach((o) => { if (o.id !== v.id) o.lines.forEach((l) => { const d = vtoks(l[0]), k = vtoks(l[1]); k.forEach((t, i) => { if (t.length > 2) pool.push([d.length === k.length ? d[i] : null, t]); }); }); });
+  const seen = new Set([kt[bi]]);
+  const distract = shuffle(pool).filter(([, k]) => !seen.has(k) && seen.add(k)).slice(0, 3);
+  const answer = both(aligned ? dt[bi] : null, kt[bi], showDeva);
+  return {
+    type: "mcq", small: true, ask: "ಖಾಲಿ ಜಾಗಕ್ಕೆ ಸರಿಯಾದ ಪದ ಆರಿಸಿ",
+    prompt: kt.map((t, i) => (i === bi ? "_____" : t)).join(" "),
+    promptDev: showDeva && aligned ? dt.map((t, i) => (i === bi ? "_____" : t)).join(" ") : null,
+    sub: v.t, answer, options: shuffle([answer, ...distract.map(([d, k]) => both(d, k, showDeva))]),
+  };
+}
+export function gistQ(v, all) {
+  const others = pick(all.filter((o) => o.id !== v.id && o.g !== v.g).map((o) => o.g), 3);
+  return { type: "mcq", small: true, ask: "ಈ ಸುಭಾಷಿತದ ಸಾರ ಏನು?", prompt: v.lines[0][1] + " …", promptDev: v.lines[0][0], answer: v.g, options: shuffle([v.g, ...others]) };
+}
+export const readQ = (q) => ({ type: "mcq", small: true, ask: "ವಾಚನದ ಪ್ರಶ್ನೆ", prompt: q.q, answer: q.o[0], options: shuffle(q.o) });
+
 /* ── Question views ────────────────────────────────────── */
 function Mcq({ q, onDone }) {
   const [picked, setPicked] = useState(null);
@@ -137,7 +170,7 @@ function Mcq({ q, onDone }) {
       <div className="card qcard">
         <div className="ask">{q.ask}</div>
         {q.promptDev && <div className="dev q-dev">{q.promptDev}</div>}
-        <div className={`q-prompt${q.dev ? " dev" : ""}`}>{q.prompt}</div>
+        <div className={`q-prompt${q.dev ? " dev" : ""}${q.small ? " fillk" : ""}`}>{q.prompt}</div>
         {q.sub && <div className="q-sub">{q.sub}</div>}
       </div>
       {q.options.map((o) => {
