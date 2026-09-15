@@ -28,9 +28,16 @@ export const EMPTY = {
   xp: 0, streak: 0, lastDay: null,
   badges: [], shares: 0,
   challengeTicks: {}, // weekNum → [bool,bool,bool]
-  reports: [],        // { kind:"w"|"s"|"d", id, label, on }
+  reports: [],        // { kind:"w"|"s"|"d"|"g"|"u"|"r", id, label, on }
   l0done: false,
+  plan: null,         // { day:"YYYY-MM-DD", w, s, r, u } — ಇಂದಿನ ಯೋಜನೆಯ ಗುರುತುಗಳು
 };
+
+/* ── daily plan ─────────────────────────────────────────── */
+export const planToday = (s) => (s.plan && s.plan.day === dayKey() ? s.plan : { day: dayKey(), w: false, s: false, r: false, u: false });
+export const markPlan = (s, k) => ({ ...s, plan: { ...planToday(s), [k]: true } });
+// first review of a newly learned item is due tomorrow
+export const seedSrs = (s, key) => (s.srs[key] ? s : { ...s, srs: { ...s.srs, [key]: { lvl: 1, due: dayNum() + 1 } } });
 
 // V1 → V2: numeric SRS keys become "w<id>", report labels become ids.
 export function migrate(raw) {
@@ -131,7 +138,7 @@ export const shareSubhashita = (v, s) => `${HEAD}\nಇಂದಿನ ಸುಭಾ�
 export const inviteText = (s) => `${HEAD}\nನಾನು ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲದಲ್ಲಿ ಸಂಸ್ಕೃತ ಕಲಿಯಲು ಶುರು ಮಾಡಿದ್ದೇನೆ.\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ ಸಾಕು. ನೀವೂ ಜೊತೆಗೆ ಕಲಿಯುತ್ತೀರಾ?\n\nಆ್ಯಪ್: ${APP_URL}\nಮಂಡಲಕ್ಕೆ ಸೇರಲು: ${WA_GROUP}\n\n— ${s.name}\n${FOOT}`;
 
 /* ── progress backup / transfer ─────────────────────────── */
-const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "schema"];
+const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "plan", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "schema"];
 const b64u = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
 export function exportCode(s) {
@@ -144,3 +151,21 @@ export function importCode(code) {
   return migrate(raw);
 }
 export const transferLink = (s) => `${APP_URL}/#import=${exportCode(s)}`;
+
+/* ── daily reminder (no server: calendar file or a WhatsApp note to self) ── */
+export function reminderIcs(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const d = new Date(); d.setHours(h, m, 0, 0); if (d < new Date()) d.setDate(d.getDate() + 1);
+  const p = (n) => String(n).padStart(2, "0");
+  const start = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${p(h)}${p(m)}00`;
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const lines = [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Kalpatharu Sanskrit Circle//KN", "BEGIN:VEVENT",
+    `UID:ksm-daily-${start}@kalpatharu`, `DTSTAMP:${stamp}`, `DTSTART:${start}`, "DURATION:PT5M", "RRULE:FREQ=DAILY",
+    "SUMMARY:ಸಂಸ್ಕೃತ — ಇಂದಿನ ಐದು ನಿಮಿಷ", `DESCRIPTION:ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್ — ${APP_URL}`, `URL:${APP_URL}`,
+    "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:PT0M", "DESCRIPTION:ಸಂಸ್ಕೃತ — ಐದು ನಿಮಿಷ", "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR",
+  ];
+  return "data:text/calendar;charset=utf-8," + encodeURIComponent(lines.join("\r\n"));
+}
+export const reminderWa = () => `https://wa.me/?text=${encodeURIComponent(`🌿 ಸಂಸ್ಕೃತ — ದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ\nಇಂದಿನ ಪಾಠ: ${APP_URL}\n\n(ಈ ಸಂದೇಶವನ್ನು ನಿಮಗೇ ಕಳಿಸಿ, ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ)`)}`;

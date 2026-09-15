@@ -84,7 +84,7 @@ export function wordQ(w, pool, showDeva) {
   const others = distinct(pool.filter((x) => x.id !== w.id && !clash(x, w)), 3);
   const kinds = showDeva ? ["m2w", "w2m", "d2k"] : ["m2w", "w2m"];
   const kind = kinds[Math.floor(Math.random() * kinds.length)];
-  const base = { type: "mcq", key: "w" + w.id, kind };
+  const base = { type: "mcq", key: "w" + w.id, kind, why: `${w.k} (${w.d}) = ${w.m}${w.tip ? " · " + w.tip : ""}` };
   if (kind === "w2m") return { ...base, ask: "ಇದರ ಅರ್ಥವೇನು?", prompt: w.k, promptDev: showDeva ? w.d : null, answer: w.m, options: shuffle([w.m, ...others.map((o) => o.m)]) };
   if (kind === "d2k") return { ...base, ask: "ಕನ್ನಡ ಲಿಪಿಯಲ್ಲಿ ಇದು ಯಾವುದು?", prompt: w.d, dev: true, answer: w.k, options: shuffle([w.k, ...others.map((o) => o.k)]) };
   return { ...base, ask: "ಸಂಸ್ಕೃತದಲ್ಲಿ ಇದು ಯಾವುದು?", prompt: w.m, answer: w.k, options: shuffle([w.k, ...others.map((o) => o.k)]) };
@@ -100,8 +100,9 @@ export function arrangeQ(x) {
   const items = kt.map((k, i) => ({ i, k, d: dt[i] }));
   let order = shuffle(items);
   for (let n = 0; n < 5 && order.every((t, j) => t.i === j); n++) order = shuffle(items);
-  return { type: "arrange", key: "s" + x.id, meaning: x.m, items: order, n: items.length };
+  return { type: "arrange", key: "s" + x.id, meaning: x.m, items: order, n: items.length, why: partsWhy(x) };
 }
+const partsWhy = (x) => x.parts.map(([d, m]) => `${d} = ${m}`).join(" · ");
 export function fillQ(x, allSents) {
   const kt = kTokens(x), dt = tokens(x);
   const cands = kt.map((k, i) => i).filter((i) => kt[i].length > 1);
@@ -110,7 +111,7 @@ export function fillQ(x, allSents) {
   allSents.forEach((o) => { if (o.id !== x.id && alignable(o)) kTokens(o).forEach((t) => pool.push(t)); });
   const distract = pick([...new Set(pool)].filter((t) => t !== kt[bi]), 3);
   return {
-    type: "fill", key: "s" + x.id, meaning: x.m,
+    type: "fill", key: "s" + x.id, meaning: x.m, why: partsWhy(x),
     k: kt.map((t, i) => (i === bi ? "_____" : t)).join(" "),
     d: dt.map((t, i) => (i === bi ? "_____" : t)).join(" "),
     answer: kt[bi], options: shuffle([kt[bi], ...distract]),
@@ -121,7 +122,7 @@ export function nextLineQ(dia, i, allDias) {
   const cur = dia.lines[i], nxt = dia.lines[i + 1];
   const others = [];
   allDias.forEach((d) => d.lines.forEach((l) => { if (l[2] !== nxt[2] && l[2] !== cur[2]) others.push(l[2]); }));
-  return { type: "mcq", ask: "ಇದಕ್ಕೆ ಮುಂದಿನ ಉತ್ತರ ಯಾವುದು?", prompt: cur[2], sub: cur[3], promptDev: null, answer: nxt[2], options: shuffle([nxt[2], ...pick([...new Set(others)], 2)]) };
+  return { type: "mcq", ask: "ಇದಕ್ಕೆ ಮುಂದಿನ ಉತ್ತರ ಯಾವುದು?", prompt: cur[2], sub: cur[3], promptDev: null, answer: nxt[2], options: shuffle([nxt[2], ...pick([...new Set(others)], 2)]), why: `${nxt[2]} — ${nxt[3]}` };
 }
 export function letterQ(pair, all) {
   const others = pick(all.filter((x) => x[1] !== pair[1]), 3);
@@ -131,10 +132,47 @@ export function letterQ(pair, all) {
 /* ── ಹಂತ 4, 5, 6 ರ ಪ್ರಶ್ನೆಗಳು ── */
 // option label: Kannada script, plus Devanagari when the learner shows it
 const both = (d, k, showDeva) => (showDeva && d && d !== k ? `${k}  ${d}` : k);
-export function grammarQ(q, showDeva) {
+export function grammarQ(q, showDeva, g) {
   const opts = q.o.map(([d, k]) => both(d, k, showDeva));
-  return { type: "mcq", small: true, ask: "ಸರಿಯಾದ ರೂಪ ಆರಿಸಿ", prompt: q.k, promptDev: showDeva ? q.q : null, sub: q.h, answer: opts[0], options: shuffle(opts) };
+  return { type: "mcq", small: true, key: g ? "g" + g.id : undefined, ask: "ಸರಿಯಾದ ರೂಪ ಆರಿಸಿ", prompt: q.k, promptDev: showDeva ? q.q : null, sub: q.h,
+    answer: opts[0], options: shuffle(opts), why: `${q.o[0][1]} (${q.o[0][0]}) — ${q.h}${g?.tip ? " · " + g.tip : ""}` };
 }
+// Questions generated from a lesson's example table: blank one inflected word of a sentence row.
+const STOP = new Set(["अहं", "त्वं", "सः", "सा", "ते", "ताः", "वयं", "यूयं", "भवान्", "भवती", "एषः", "एषा", "एतत्", "तत्", "अस्ति", "सन्ति", "मम", "तव", "कृपया", "अत्र", "तत्र", "एकः", "एका", "एकम्", "द्वौ", "द्वे", "त्रीणि", "कति", "च", "किं", "सह"]);
+const stripP = (t) => t.replace(/[।?,]/g, "");
+const rowToks = (r) => [r[1].trim().split(/\s+/), r[2].trim().split(/\s+/)];
+const sentRows = (g) => g.rows.filter((r) => !/[→·]/.test(r[1]) && rowToks(r)[0].length >= 2 && rowToks(r)[0].length === rowToks(r)[1].length);
+export function tableQ(g, allG, showDeva) {
+  const rows = sentRows(g);
+  if (!rows.length) return null;
+  const r = rows[Math.floor(Math.random() * rows.length)];
+  const [dt, kt] = rowToks(r);
+  const cands = dt.map((_, i) => i).filter((i) => !STOP.has(stripP(dt[i])) && stripP(dt[i]).length > 1);
+  const bi = cands.length ? cands[Math.floor(Math.random() * cands.length)] : dt.length - 1;
+  const ans = [stripP(dt[bi]), stripP(kt[bi])];
+  const pool = [];
+  const push = (rr) => { const [d, k] = rowToks(rr); d.forEach((t, i) => { const s = stripP(t); if (!STOP.has(s) && s !== ans[0] && s.length > 1) pool.push([s, stripP(k[i])]); }); };
+  rows.forEach(push);
+  allG.filter((o) => o.id !== g.id).forEach((o) => sentRows(o).forEach(push));
+  const seen = new Set([ans[0]]);
+  const uniq = pool.filter(([d]) => !seen.has(d) && seen.add(d));
+  const own = new Set(rows.flatMap((rr) => rowToks(rr)[0].map(stripP)));
+  const rank = (x) => (x[0].slice(0, 2) === ans[0].slice(0, 2) ? 0 : 1) + (own.has(x[0]) ? 0 : 2); // same stem, same lesson first
+  const distract = shuffle(uniq).sort((a, b) => rank(a) - rank(b)).slice(0, 3);
+  const opts = [ans, ...distract].map(([d, k]) => both(d, k, showDeva));
+  return {
+    type: "mcq", small: true, key: "g" + g.id, ask: "ಸರಿಯಾದ ರೂಪ ಆರಿಸಿ",
+    prompt: kt.map((t, i) => (i === bi ? "_____" : t)).join(" "), promptDev: showDeva ? dt.map((t, i) => (i === bi ? "_____" : t)).join(" ") : null,
+    sub: r[3], answer: opts[0], options: shuffle(opts), why: `${r[2]} — ${r[3]}${g.tip ? " · " + g.tip : ""}`,
+  };
+}
+// A lesson quiz: the authored questions plus table-generated ones, 6 at a time.
+export const grammarQuiz = (g, allG, showDeva, n = 6) => {
+  const gen = []; const seen = new Set();
+  for (let i = 0; i < 12 && gen.length < 4; i++) { const q = tableQ(g, allG, showDeva); if (q && !seen.has(q.prompt)) { seen.add(q.prompt); gen.push(q); } }
+  return shuffle([...g.qs.map((q) => grammarQ(q, showDeva, g)), ...gen]).slice(0, n);
+};
+export const gramReviewQ = (g, allG, showDeva) => (Math.random() < 0.5 && tableQ(g, allG, showDeva)) || grammarQ(pick(g.qs, 1)[0], showDeva, g);
 const vtoks = (t) => t.replace(/[।॥]/g, "").trim().split(/\s+/);
 // blank one word of one pada; distractors from other verses
 export function subhFillQ(v, all, showDeva) {
@@ -149,17 +187,18 @@ export function subhFillQ(v, all, showDeva) {
   const distract = shuffle(pool).filter(([, k]) => !seen.has(k) && seen.add(k)).slice(0, 3);
   const answer = both(aligned ? dt[bi] : null, kt[bi], showDeva);
   return {
-    type: "mcq", small: true, ask: "ಖಾಲಿ ಜಾಗಕ್ಕೆ ಸರಿಯಾದ ಪದ ಆರಿಸಿ",
+    type: "mcq", small: true, key: "u" + v.id, ask: "ಖಾಲಿ ಜಾಗಕ್ಕೆ ಸರಿಯಾದ ಪದ ಆರಿಸಿ",
     prompt: kt.map((t, i) => (i === bi ? "_____" : t)).join(" "),
     promptDev: showDeva && aligned ? dt.map((t, i) => (i === bi ? "_____" : t)).join(" ") : null,
     sub: v.t, answer, options: shuffle([answer, ...distract.map(([d, k]) => both(d, k, showDeva))]),
+    why: `${v.lines[li][1]} — ${v.m}`,
   };
 }
 export function gistQ(v, all) {
   const others = pick(all.filter((o) => o.id !== v.id && o.g !== v.g).map((o) => o.g), 3);
-  return { type: "mcq", small: true, ask: "ಈ ಸುಭಾಷಿತದ ಸಾರ ಏನು?", prompt: v.lines[0][1] + " …", promptDev: v.lines[0][0], answer: v.g, options: shuffle([v.g, ...others]) };
+  return { type: "mcq", small: true, key: "u" + v.id, ask: "ಈ ಸುಭಾಷಿತದ ಸಾರ ಏನು?", prompt: v.lines[0][1] + " …", promptDev: v.lines[0][0], answer: v.g, options: shuffle([v.g, ...others]), why: v.m };
 }
-export const readQ = (q) => ({ type: "mcq", small: true, ask: "ವಾಚನದ ಪ್ರಶ್ನೆ", prompt: q.q, answer: q.o[0], options: shuffle(q.o) });
+export const readQ = (q, r) => ({ type: "mcq", small: true, key: r ? "r" + r.id : undefined, ask: r ? `ವಾಚನ: ${r.t}` : "ವಾಚನದ ಪ್ರಶ್ನೆ", prompt: q.q, answer: q.o[0], options: shuffle(q.o), why: `ಸರಿ ಉತ್ತರ: ${q.o[0]}` });
 
 /* ── Question views ────────────────────────────────────── */
 function Mcq({ q, onDone }) {
@@ -181,6 +220,7 @@ function Mcq({ q, onDone }) {
       {picked && (
         <div className="after">
           <div className={`verdict ${right ? "good" : ""}`}>{right ? "ಸರಿ 🌿" : "ಪರವಾಗಿಲ್ಲ. ಇದು ಮತ್ತೆ ಬರುತ್ತದೆ."}</div>
+          {q.why && !right && <div className="why">{q.why}</div>}
           <Btn wide onClick={() => onDone(q.key ? [[q.key, right]] : [], right)}>ಮುಂದೆ</Btn>
         </div>
       )}
@@ -253,6 +293,7 @@ function Arrange({ q, p, onDone }) {
         <div className="after">
           <div className={`verdict ${checked ? "good" : ""}`}>{checked ? "ಸರಿಯಾದ ಕ್ರಮ 🌿" : "ಸರಿಯಾದ ಕ್ರಮ ಹೀಗಿದೆ:"}</div>
           {!checked && <div className="answer-line">{correct.map((t) => t.k).join(" ")}</div>}
+          {q.why && !checked && <div className="why">{q.why}</div>}
           <Btn wide onClick={() => onDone([[q.key, checked]], checked)}>ಮುಂದೆ</Btn>
         </div>
       )}
@@ -278,6 +319,7 @@ function Fill({ q, p, onDone }) {
       {picked && (
         <div className="after">
           <div className={`verdict ${right ? "good" : ""}`}>{right ? "ಸರಿ 🌿" : "ಪರವಾಗಿಲ್ಲ. ಇದು ಮತ್ತೆ ಬರುತ್ತದೆ."}</div>
+          {q.why && !right && <div className="why">{q.why}</div>}
           <Btn wide onClick={() => onDone([[q.key, right]], right)}>ಮುಂದೆ</Btn>
         </div>
       )}

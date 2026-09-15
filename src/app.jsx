@@ -5,13 +5,14 @@ import {
   visWords, visSents, visDias, visGram, visSubh, visRead, gradeItem, wordState, isDue, touch, usageOf,
   challengeOfWeek, shareWord, shareSentence, shareLesson, shareBadge, shareChallenge, shareFree, shareSubhashita,
   inviteText, exportCode, importCode, transferLink, WA_GROUP, APP_URL,
+  planToday, markPlan, seedSrs, reminderIcs, reminderWa,
 } from "./lib.js";
 import {
   Btn, Header, Bar, ScriptCard, Parts, SrcLine, Quiz, FS,
-  wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQ, subhFillQ, gistQ, readQ,
+  wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "2.1";
+const VERSION = "2.2";
 
 /* ── badges ─────────────────────────────────────────────── */
 const BADGES = [
@@ -81,6 +82,13 @@ export default function App() {
     grade: (grades) => update((st) => touch(grades.reduce((acc, [k, ok]) => gradeItem(acc, k, ok), st))),
     openImport: (data) => setSheet({ kind: "import", data }),
     learnWord: (id) => update((st) => touch(st.learned.includes(id) ? st : { ...st, learned: [...st.learned, id], xp: st.xp + 5 })),
+    // tick one item of today's plan; celebrate when all four are done
+    plan: (k) => update((st) => {
+      if (planToday(st)[k]) return st;
+      const n = markPlan(st, k), p = n.plan;
+      if (p.w && p.s && p.u && (p.r || !dueItems(n).length)) setTimeout(() => flash("ಇಂದಿನ ಗುರಿ ಪೂರ್ಣ 🌿 ನಾಳೆ ಮತ್ತೆ ಸಿಗೋಣ."), 50);
+      return n;
+    }),
   };
 
   if (!s.onboarded) return (
@@ -153,8 +161,17 @@ function Home({ api, setTab }) {
   const w = words[dayNum() % words.length];
   const x = sents[dayNum() % sents.length];
   const next = words.find((v) => !s.learned.includes(v.id));
+  const nextS = sents.find((v) => !s.sentences.includes(v.id));
   const U = visSubh(s), u = U.length ? U[dayNum() % U.length] : null, f = FS[s.fontStep];
   const due = dueItems(s);
+  const plan = planToday(s);
+  const items = [
+    { k: "w", t: next ? "ಹೊಸ ಪದಗಳ ಪಾಠ" : "ಪದಗಳ ಅಭ್ಯಾಸ", d: next ? `ಪದ #${pad3(next.id)} ರಿಂದ, ಐದು ಪದ` : "ಎಲ್ಲಾ ಪದಗಳೂ ಕಲಿತಾಯಿತು 🎉", go: () => api.go({ kind: "lesson" }), done: plan.w },
+    { k: "s", t: "ಒಂದು ವಾಕ್ಯ ಕಲಿಯಿರಿ", d: nextS ? `ವಾಕ್ಯ #${pad3(nextS.id)} — ${nextS.m}` : "ಎಲ್ಲಾ ವಾಕ್ಯಗಳೂ ಕಲಿತಾಯಿತು 🎉", go: () => api.go({ kind: "l2" }), done: plan.s },
+    { k: "r", t: "ಪುನರಾವರ್ತನೆ", d: due.length ? `${due.length} ಬಾಕಿ — ಮರೆಯುವ ಮೊದಲು` : "ಇಂದು ಏನೂ ಬಾಕಿ ಇಲ್ಲ", go: () => due.length && api.go({ kind: "review" }), done: plan.r || !due.length },
+    { k: "u", t: "ಇಂದಿನ ಸುಭಾಷಿತ", d: u ? u.t : "", go: () => u && api.go({ kind: "subhashita", id: u.id }), done: plan.u },
+  ];
+  const doneN = items.filter((i) => i.done).length;
   const wk = weekNum(), ch = challengeOfWeek();
   const ticks = s.challengeTicks[wk] || [false, false, false];
   const tick = (i) => api.update((st) => {
@@ -173,16 +190,17 @@ function Home({ api, setTab }) {
       <div className="pad">
         <div className="card stats">{stat(`🔥 ${s.streak}`, "ಸರಣಿ")}{stat(`⭐ ${s.xp}`, "ಅಂಕ")}{stat(`📚 ${s.learned.length}`, "ಪದಗಳು")}{stat(`💬 ${s.sentences.length}`, "ವಾಕ್ಯಗಳು")}</div>
 
-        <div className="card today">
-          <div className="sec-t">ಅಭ್ಯಾಸಃ — ಇಂದಿನ ಅಭ್ಯಾಸ</div>
-          {next ? (<>
-            <p>ಮುಂದಿನ ಪಾಠ: <b>ಪದ #{pad3(next.id)}</b>{due.length > 0 && <> · ಪುನರಾವರ್ತನೆಗೆ {due.length}</>}</p>
-            <Btn wide onClick={() => api.go({ kind: "lesson" })}>ಇಂದಿನ ಪಾಠ ಆರಂಭಿಸಿ</Btn>
-          </>) : (<>
-            <p>ಈಗಿರುವ ಎಲ್ಲಾ {words.length} ಪದಗಳೂ ಕಲಿತಾಯಿತು 🎉 ಈಗ ಪುನರಾವರ್ತನೆ ಮತ್ತು ವಾಕ್ಯಗಳು.</p>
-            <Btn wide onClick={() => due.length ? api.go({ kind: "review" }) : setTab("learn")}>{due.length ? `ಪುನರಾವರ್ತನೆ ಮಾಡಿ (${due.length})` : "ವಾಕ್ಯಗಳನ್ನು ಕಲಿಯಿರಿ"}</Btn>
-          </>)}
-          {next && due.length > 0 && <Btn wide kind="line" onClick={() => api.go({ kind: "review" })}>ಪುನರಾವರ್ತನೆ ಮಾಡಿ ({due.length})</Btn>}
+        <div className="card today plan">
+          <div className="plan-h"><div className="sec-t">ಅಭ್ಯಾಸಃ — ಇಂದಿನ ಯೋಜನೆ</div><span className="lvl-p">{doneN} / {items.length}</span></div>
+          {items.map((it) => (
+            <button type="button" key={it.k} className={`tick${it.done ? " on" : ""}`} aria-pressed={it.done} onClick={it.go}>
+              <span className="box">{it.done ? "✓" : ""}</span>
+              <span className="lvl-b"><b>{it.t}</b><span className="muted small">{it.d}</span></span>
+            </button>
+          ))}
+          {doneN === items.length
+            ? <p className="muted center small">ಇಂದಿನ ಗುರಿ ಪೂರ್ಣ 🌿 ಬೇಕಿದ್ದರೆ ಇನ್ನೊಂದು ಪಾಠ ಮಾಡಿ.</p>
+            : <Btn wide onClick={items.find((i) => !i.done).go}>{items.find((i) => !i.done).t} →</Btn>}
         </div>
 
         {w && <ScriptCard item={w} p={s} split={w.split} tip={w.tip} tag="ಶಬ್ದಃ — ಇಂದಿನ ಪದ"
@@ -220,7 +238,20 @@ function Home({ api, setTab }) {
 function dueItems(s) {
   const w = visWords(s).filter((v) => s.learned.includes(v.id) && isDue(s, "w" + v.id)).map((v) => ({ t: "w", v }));
   const x = visSents(s).filter((v) => s.sentences.includes(v.id) && isDue(s, "s" + v.id)).map((v) => ({ t: "s", v }));
-  return [...w, ...x];
+  const g = visGram(s).filter((v) => s.grammar.includes(v.id) && isDue(s, "g" + v.id)).map((v) => ({ t: "g", v }));
+  const u = visSubh(s).filter((v) => s.subhashitas.includes(v.id) && isDue(s, "u" + v.id)).map((v) => ({ t: "u", v }));
+  const r = visRead(s).filter((v) => s.readings.includes(v.id) && isDue(s, "r" + v.id)).map((v) => ({ t: "r", v }));
+  return [...w, ...x, ...g, ...u, ...r];
+}
+// one review question for any kind of item
+function reviewQ(x, s, i) {
+  const W = visWords(s), S = visSents(s), G = visGram(s), U = visSubh(s);
+  if (x.t === "w") return wordQ(x.v, W, s.showDeva);
+  if (x.t === "s") return alignable(x.v) && x.v.parts.length >= 2 ? sentQ(x.v, S, i) : null;
+  if (x.t === "g") return gramReviewQ(x.v, G, s.showDeva);
+  if (x.t === "u") return Math.random() < 0.7 ? subhFillQ(x.v, U, s.showDeva) : gistQ(x.v, U);
+  if (x.t === "r") return readQ(pick(x.v.qs, 1)[0], x.v);
+  return null;
 }
 
 /* ═══════════════════ learn path ═══════════════════ */
@@ -344,7 +375,7 @@ function Lesson({ api, mod }) {
     <Done api={api} title="ಅದ್ಭುತಮ್ 🎉" line={`ಇಂದು ನೀವು ${set.length} ಹೊಸ ಸಂಸ್ಕೃತ ಪದಗಳನ್ನು ಕಲಿತಿರಿ. ಅಭ್ಯಾಸದಲ್ಲಿ ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`}
       shareText={shareLesson(set, s)} />
   );
-  if (phase === "quiz") return <Quiz qs={qs} p={s} title="ಅಭ್ಯಾಸ" onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => setRes({ s: sc, t })} />;
+  if (phase === "quiz") return <Quiz qs={qs} p={s} title="ಅಭ್ಯಾಸ" onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => { setRes({ s: sc, t }); api.plan("w"); }} />;
 
   const st = steps[i];
   const w = st.w;
@@ -399,8 +430,8 @@ function Level2({ api }) {
   const S = visSents(s);
   const [open, setOpen] = useState(null);
   const learned = S.filter((x) => s.sentences.includes(x.id));
-  const mark = (x) => api.update((st) => touch(st.sentences.includes(x.id) ? st
-    : { ...st, sentences: [...st.sentences, x.id], xp: st.xp + 3, srs: { ...st.srs, ["s" + x.id]: { lvl: 1, due: dayNum() + 1 } } }));
+  const mark = (x) => { api.update((st) => touch(st.sentences.includes(x.id) ? st
+    : seedSrs({ ...st, sentences: [...st.sentences, x.id], xp: st.xp + 3 }, "s" + x.id))); api.plan("s"); };
   return (
     <>
       <Header title="ಹಂತ 2 — ಸರಳವಾಕ್ಯಾನಿ" sub="ವಾಕ್ಯ ಒತ್ತಿದರೆ ಪದಚ್ಛೇದ ಕಾಣುತ್ತದೆ" onBack={api.close} />
@@ -533,7 +564,7 @@ function GrammarLesson({ api, id }) {
   if (!g) return <><Header title="ವ್ಯಾಕರಣ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ಪಾಠ ಸಿಗಲಿಲ್ಲ.</p></div></>;
   if (res) return <Done api={api} title="ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
   if (quiz) return <Quiz qs={quiz} p={s} title={g.t} onBack={() => setQuiz(null)} onGrade={() => {}}
-    onFinish={(sc, t) => { api.update((st) => touch({ ...st, grammar: st.grammar.includes(g.id) ? st.grammar : [...st.grammar, g.id], xp: st.xp + sc + 5 })); setRes({ s: sc, t }); }} />;
+    onFinish={(sc, t) => { api.update((st) => touch(seedSrs({ ...st, grammar: st.grammar.includes(g.id) ? st.grammar : [...st.grammar, g.id], xp: st.xp + sc + 5 }, "g" + g.id))); setRes({ s: sc, t }); }} />;
   const done = s.grammar.includes(g.id);
   return (
     <>
@@ -553,7 +584,8 @@ function GrammarLesson({ api, id }) {
         </div>
         {g.tip && <div className="tip">💡 {g.tip}</div>}
         <div className="card-foot"><SrcLine item={g} /><button type="button" className="link warn" onClick={() => api.report("g", g.id, `ವ್ಯಾಕರಣ: ${g.t}`)}>ತಪ್ಪು ತಿಳಿಸಿ</button></div>
-        <Btn wide onClick={() => setQuiz(shuffle(g.qs).map((q) => grammarQ(q, s.showDeva)))}>ಅಭ್ಯಾಸ ({g.qs.length} ಪ್ರಶ್ನೆ)</Btn>
+        <Btn wide onClick={() => setQuiz(grammarQuiz(g, visGram(s), s.showDeva))}>ಅಭ್ಯಾಸ (6 ಪ್ರಶ್ನೆ)</Btn>
+        <p className="muted small center">ಪ್ರತಿ ಬಾರಿ ಬೇರೆ ಪ್ರಶ್ನೆಗಳು — ಕೋಷ್ಟಕದಿಂದಲೂ ಪ್ರಶ್ನೆ ಬರುತ್ತದೆ.</p>
         {done && <div className="muted center">ಮುಗಿದಿದೆ ✓</div>}
       </div>
     </>
@@ -587,9 +619,12 @@ function Subhashita({ api, id }) {
   const v = SUBHASHITAS.find((x) => x.id === id);
   const [showParts, setShowParts] = useState(false);
   const f = FS[s.fontStep];
+  const U = visSubh(s);
+  const isToday = !!v && U.length > 0 && U[dayNum() % U.length].id === v.id;
+  useEffect(() => { if (isToday) api.plan("u"); }, [isToday]);   // reading today's verse counts
   if (!v) return <><Header title="ಸುಭಾಷಿತ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ಸುಭಾಷಿತ ಸಿಗಲಿಲ್ಲ.</p></div></>;
   const done = s.subhashitas.includes(v.id);
-  const mark = () => api.update((st) => touch(st.subhashitas.includes(v.id) ? st : { ...st, subhashitas: [...st.subhashitas, v.id], xp: st.xp + 8 }));
+  const mark = () => { api.update((st) => touch(st.subhashitas.includes(v.id) ? st : seedSrs({ ...st, subhashitas: [...st.subhashitas, v.id], xp: st.xp + 8 }, "u" + v.id))); api.plan("u"); };
   return (
     <>
       <Header title={v.t} sub={`ಸುಭಾಷಿತ #${pad3(v.id)} · ${v.from}`} onBack={() => api.go({ kind: "l5" })} />
@@ -660,7 +695,7 @@ function Reading({ api, id }) {
   if (!r) return <><Header title="ವಾಚನ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ವಾಚನ ಸಿಗಲಿಲ್ಲ.</p></div></>;
   if (res) return <Done api={api} title="ವಾಚನ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
   if (quiz) return <Quiz qs={quiz} p={s} title={r.t} onBack={() => setQuiz(null)} onGrade={() => {}}
-    onFinish={(sc, t) => { api.update((st) => touch({ ...st, readings: st.readings.includes(r.id) ? st.readings : [...st.readings, r.id], xp: st.xp + sc + 5 })); setRes({ s: sc, t }); }} />;
+    onFinish={(sc, t) => { api.update((st) => touch(seedSrs({ ...st, readings: st.readings.includes(r.id) ? st.readings : [...st.readings, r.id], xp: st.xp + sc + 5 }, "r" + r.id))); setRes({ s: sc, t }); }} />;
   const done = s.readings.includes(r.id);
   return (
     <>
@@ -686,7 +721,7 @@ function Reading({ api, id }) {
           ))}
         </div>
         <div className="card-foot"><SrcLine item={r} /><button type="button" className="link warn" onClick={() => api.report("r", r.id, `ವಾಚನ: ${r.t}`)}>ತಪ್ಪು ತಿಳಿಸಿ</button></div>
-        <Btn wide onClick={() => setQuiz(r.qs.map(readQ))}>ಗ್ರಹಿಕೆಯ ಪ್ರಶ್ನೆಗಳು ({r.qs.length})</Btn>
+        <Btn wide onClick={() => setQuiz(r.qs.map((q) => readQ(q)))}>ಗ್ರಹಿಕೆಯ ಪ್ರಶ್ನೆಗಳು ({r.qs.length})</Btn>
         {done && <div className="muted center">ಮುಗಿದಿದೆ ✓</div>}
       </div>
     </>
@@ -726,22 +761,21 @@ function Review({ api, mistakes }) {
   const { s } = api;
   const [res, setRes] = useState(null);
   const qs = useMemo(() => {
-    const W = visWords(s), S = visSents(s);
     let items;
     if (mistakes) {
-      items = s.mistakes.map((k) => k[0] === "w" ? { t: "w", v: W.find((w) => "w" + w.id === k) } : { t: "s", v: S.find((x) => "s" + x.id === k) }).filter((x) => x.v);
+      const lists = { w: visWords(s), s: visSents(s), g: visGram(s), u: visSubh(s), r: visRead(s) };
+      items = s.mistakes.map((k) => ({ t: k[0], v: (lists[k[0]] || []).find((v) => k[0] + v.id === k) })).filter((x) => x.v);
     } else items = dueItems(s);
     items = shuffle(items).slice(0, 12);
     const ws = items.filter((x) => x.t === "w").map((x) => x.v);
-    const q = items.map((x, i) => x.t === "w" ? wordQ(x.v, W, s.showDeva)
-      : (alignable(x.v) && x.v.parts.length >= 2 ? sentQ(x.v, S, i) : null)).filter(Boolean);
+    const q = items.map((x, i) => reviewQ(x, s, i)).filter(Boolean);
     if (!mistakes && ws.length >= 6 && distinct(ws, 4).length === 4) q.push(matchQ(ws));
     return shuffle(q);
   }, []);
   const title = mistakes ? "ತಪ್ಪುಗಳ ಪುಸ್ತಕ" : "ಪುನರಾವರ್ತನೆ";
   if (!qs.length) return <><Header title={title} onBack={api.close} /><div className="pad"><p className="lead">ಇಂದು ಪುನರಾವರ್ತಿಸಲು ಏನೂ ಇಲ್ಲ. ಹೊಸ ಪಾಠ ಆರಂಭಿಸಿ 🌿</p><Btn wide onClick={api.close}>ಹಿಂದೆ</Btn></div></>;
   if (res) return <Done api={api} title="ಸಾಧು 🌿" line={`${title} ಪೂರ್ಣ — ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ. ತಪ್ಪಾದವು ತಪ್ಪುಗಳ ಪುಸ್ತಕದಲ್ಲಿ ಸೇರಿವೆ. ಮತ್ತೆ ಬರುತ್ತವೆ.`} />;
-  return <Quiz qs={qs} p={s} title={title} onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => setRes({ s: sc, t })} />;
+  return <Quiz qs={qs} p={s} title={title} onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => { setRes({ s: sc, t }); if (!mistakes) api.plan("r"); }} />;
 }
 
 function Flash({ api }) {
@@ -843,6 +877,7 @@ function Me({ api }) {
   const { s, update, flash } = api;
   const [name, setName] = useState(s.name);
   const [code, setCode] = useState("");
+  const [remT, setRemT] = useState("07:00");
   const copy = (t, msg) => (navigator.clipboard?.writeText(t) || Promise.reject()).then(() => flash(msg), () => flash("ನಕಲಿಸಲು ಆಗಲಿಲ್ಲ. ಕೈಯಾರೆ ಆರಿಸಿ ನಕಲಿಸಿ."));
   const reportText = s.reports.length
     ? `ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್ — ತಪ್ಪಿನ ವರದಿ (${s.name})\n\n` + s.reports.map((r, i) => `${i + 1}. ${r.label}${r.note ? ` — ${r.note}` : ""} (${r.on})`).join("\n")
@@ -882,6 +917,16 @@ function Me({ api }) {
           <div className="muted small" style={{ marginTop: 12 }}>ನಿಮ್ಮ ಹೆಸರು</div>
           <div className="row"><input className="input" value={name} onChange={(e) => setName(e.target.value)} aria-label="ನಿಮ್ಮ ಹೆಸರು" />
             <Btn small disabled={!name.trim() || name.trim() === s.name} onClick={() => { update({ name: name.trim() }); flash("ಹೆಸರು ಉಳಿಸಲಾಗಿದೆ"); }}>ಉಳಿಸಿ</Btn></div>
+        </div>
+
+        <div className="sec-t">ದಿನನಿತ್ಯದ ನೆನಪು</div>
+        <div className="card">
+          <p className="small">ಆ್ಯಪ್ ತಾನಾಗಿ ನೆನಪಿಸಲಾರದು (ಸರ್ವರ್ ಇಲ್ಲ). ಫೋನಿನ ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ದಿನನಿತ್ಯದ ನೆನಪು ಸೇರಿಸಿ, ಅಥವಾ ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ನಿಮಗೇ ಒಂದು ಸಂದೇಶ ಕಳಿಸಿ ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ.</p>
+          <div className="row"><label className="muted small" htmlFor="remT">ಸಮಯ</label><input id="remT" type="time" className="input" value={remT} onChange={(e) => setRemT(e.target.value)} /></div>
+          <div className="row two">
+            <a className="btn btn-solid small" href={reminderIcs(remT)} download="sanskrit-daily.ics">ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ಸೇರಿಸಿ</a>
+            <a className="btn btn-line small" href={reminderWa()} target="_blank" rel="noopener">ವಾಟ್ಸಾಪ್ ನೆನಪು</a>
+          </div>
         </div>
 
         <div className="sec-t">ವರದಿಯಾದ ತಪ್ಪುಗಳು</div>
@@ -983,6 +1028,7 @@ function mergeState(a, b) {
     srs, xp: Math.max(a.xp, b.xp), streak: later.streak, lastDay: later.lastDay,
     challengeTicks: { ...b.challengeTicks, ...a.challengeTicks },
     shares: Math.max(a.shares, b.shares), l0done: a.l0done || b.l0done,
+    plan: (a.plan?.day || "") >= (b.plan?.day || "") ? a.plan : b.plan,
   };
 }
 
