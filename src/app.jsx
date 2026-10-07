@@ -12,23 +12,25 @@ import {
   wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "2.2";
+const VERSION = "2.3";
 
 /* ── badges ─────────────────────────────────────────────── */
+// g: earned?  p: [done, needed] progress  go: where to go to earn it  h: hint shown on the locked card
+const challengeBest = (s) => Math.max(0, ...Object.values(s.challengeTicks).map((t) => (t || []).filter(Boolean).length));
 const BADGES = [
-  { id: "b1", t: "ಪ್ರಥಮಪದಮ್", d: "ಮೊದಲ ಸಂಸ್ಕೃತ ಪದ", g: (s) => s.learned.length >= 1 },
-  { id: "b2", t: "ದಶಪದಾನಿ", d: "10 ಪದಗಳು", g: (s) => s.learned.length >= 10 },
-  { id: "b3", t: "ಪಞ್ಚಾಶತ್", d: "50 ಪದಗಳು", g: (s) => s.learned.length >= 50 },
-  { id: "b4", t: "ಶತಪದಾನಿ", d: "100 ಪದಗಳು", g: (s) => s.learned.length >= 100 },
-  { id: "b5", t: "ಪ್ರಥಮವಾಕ್ಯಮ್", d: "ಮೊದಲ ವಾಕ್ಯ", g: (s) => s.sentences.length >= 1 },
-  { id: "b6", t: "ಪ್ರಥಮಸಂವಾದಃ", d: "ಮೊದಲ ಸಂಭಾಷಣೆ", g: (s) => s.dialogues.length >= 1 },
-  { id: "b7", t: "ಸಪ್ತದಿನಸಾಧನಾ", d: "7 ದಿನಗಳ ಸರಣಿ", g: (s) => s.streak >= 7 },
-  { id: "b8", t: "ತ್ರಿಂಶದ್ದಿನಸಾಧನಾ", d: "30 ದಿನಗಳ ಸರಣಿ", g: (s) => s.streak >= 30 },
-  { id: "b9", t: "ಪ್ರಥಮಸವಾಲು", d: "ಮೊದಲ ಸಪ್ತಾಹದ ಸವಾಲು", g: (s) => Object.values(s.challengeTicks).some((t) => t && t.every(Boolean)) },
-  { id: "b10", t: "ವ್ಯಾಕರಣಪ್ರವೇಶಃ", d: "ಮೊದಲ ವ್ಯಾಕರಣ ಪಾಠ", g: (s) => s.grammar.length >= 1 },
-  { id: "b11", t: "ಸುಭಾಷಿತಪ್ರಿಯಃ", d: "ಮೊದಲ ಸುಭಾಷಿತ", g: (s) => s.subhashitas.length >= 1 },
-  { id: "b12", t: "ವಾಚಕಃ", d: "ಮೊದಲ ವಾಚನ", g: (s) => s.readings.length >= 1 },
-  { id: "b13", t: "ದಶಸುಭಾಷಿತಾನಿ", d: "10 ಸುಭಾಷಿತಗಳು", g: (s) => s.subhashitas.length >= 10 },
+  { id: "b1", t: "ಪ್ರಥಮಪದಮ್", d: "ಮೊದಲ ಸಂಸ್ಕೃತ ಪದ", g: (s) => s.learned.length >= 1, p: (s) => [s.learned.length, 1], go: { kind: "lesson" }, h: "ಪದಗಳ ಪಾಠ" },
+  { id: "b2", t: "ದಶಪದಾನಿ", d: "10 ಪದಗಳು", g: (s) => s.learned.length >= 10, p: (s) => [s.learned.length, 10], go: { kind: "lesson" }, h: "ಪದಗಳ ಪಾಠ" },
+  { id: "b3", t: "ಪಞ್ಚಾಶತ್", d: "50 ಪದಗಳು", g: (s) => s.learned.length >= 50, p: (s) => [s.learned.length, 50], go: { kind: "lesson" }, h: "ಪದಗಳ ಪಾಠ" },
+  { id: "b4", t: "ಶತಪದಾನಿ", d: "100 ಪದಗಳು", g: (s) => s.learned.length >= 100, p: (s) => [s.learned.length, 100], go: { kind: "lesson" }, h: "ಪದಗಳ ಪಾಠ" },
+  { id: "b5", t: "ಪ್ರಥಮವಾಕ್ಯಮ್", d: "ಮೊದಲ ವಾಕ್ಯ", g: (s) => s.sentences.length >= 1, p: (s) => [s.sentences.length, 1], go: { kind: "l2" }, h: "ವಾಕ್ಯ ಕಲಿಯಿರಿ" },
+  { id: "b6", t: "ಪ್ರಥಮಸಂವಾದಃ", d: "ಮೊದಲ ಸಂಭಾಷಣೆ", g: (s) => s.dialogues.length >= 1, p: (s) => [s.dialogues.length, 1], go: { kind: "l3" }, h: "ಸಂವಾದಕ್ಕೆ" },
+  { id: "b7", t: "ಸಪ್ತದಿನಸಾಧನಾ", d: "7 ದಿನಗಳ ಸರಣಿ", g: (s) => s.streak >= 7, p: (s) => [s.streak, 7], go: { tab: "home" }, h: "ಪ್ರತಿದಿನ ಒಂದು ಪಾಠ" },
+  { id: "b8", t: "ತ್ರಿಂಶದ್ದಿನಸಾಧನಾ", d: "30 ದಿನಗಳ ಸರಣಿ", g: (s) => s.streak >= 30, p: (s) => [s.streak, 30], go: { tab: "home" }, h: "ಪ್ರತಿದಿನ ಒಂದು ಪಾಠ" },
+  { id: "b9", t: "ಪ್ರಥಮಸವಾಲು", d: "ಮೊದಲ ಸಪ್ತಾಹದ ಸವಾಲು", g: (s) => Object.values(s.challengeTicks).some((t) => t && t.every(Boolean)), p: (s) => [challengeBest(s), 3], go: { tab: "home" }, h: "ಸವಾಲಿನ ಮೂರು ಗುರುತು" },
+  { id: "b10", t: "ವ್ಯಾಕರಣಪ್ರವೇಶಃ", d: "ಮೊದಲ ವ್ಯಾಕರಣ ಪಾಠ", g: (s) => s.grammar.length >= 1, p: (s) => [s.grammar.length, 1], go: { kind: "l4" }, h: "ವ್ಯಾಕರಣ ಪಾಠ + ಅಭ್ಯಾಸ" },
+  { id: "b11", t: "ಸುಭಾಷಿತಪ್ರಿಯಃ", d: "ಮೊದಲ ಸುಭಾಷಿತ", g: (s) => s.subhashitas.length >= 1, p: (s) => [s.subhashitas.length, 1], go: { kind: "l5" }, h: "ಸುಭಾಷಿತ ಕಂಠಪಾಠ" },
+  { id: "b12", t: "ವಾಚಕಃ", d: "ಮೊದಲ ವಾಚನ", g: (s) => s.readings.length >= 1, p: (s) => [s.readings.length, 1], go: { kind: "l6" }, h: "ವಾಚನ + ಗ್ರಹಿಕೆಯ ಪ್ರಶ್ನೆ" },
+  { id: "b13", t: "ದಶಸುಭಾಷಿತಾನಿ", d: "10 ಸುಭಾಷಿತಗಳು", g: (s) => s.subhashitas.length >= 10, p: (s) => [s.subhashitas.length, 10], go: { kind: "l5" }, h: "ಸುಭಾಷಿತ ಕಂಠಪಾಠ" },
 ];
 
 /* ═══════════════════ root ═══════════════════ */
@@ -107,7 +109,7 @@ export default function App() {
           : tab === "learn" ? <Learn api={api} />
           : tab === "practice" ? <Practice api={api} />
           : tab === "circle" ? <Circle api={api} />
-          : <Me api={api} />}
+          : <Me api={api} setTab={setTab} />}
       </main>
       {!V && <Nav tab={tab} setTab={setTab} />}
       {sheet?.kind === "share" && <ShareSheet text={sheet.text} close={() => setSheet(null)}
@@ -873,8 +875,9 @@ function Circle({ api }) {
 }
 
 /* ═══════════════════ me ═══════════════════ */
-function Me({ api }) {
+function Me({ api, setTab }) {
   const { s, update, flash } = api;
+  const earn = (b) => { if (b.go.tab) setTab(b.go.tab); else api.go(b.go); window.scrollTo(0, 0); };
   const [name, setName] = useState(s.name);
   const [code, setCode] = useState("");
   const [remT, setRemT] = useState("07:00");
@@ -897,12 +900,25 @@ function Me({ api }) {
             .map(([v, l]) => <div key={l} className="stat"><b>{v}</b><span>{l}</span></div>)}
         </div>
 
-        <div className="sec-t">ಸಾಧನೆಗಳು</div>
+        <div className="sec-t">ಸಾಧನೆಗಳು <span className="muted">— {s.badges.length} / {BADGES.length}</span></div>
+        <p className="muted small">ಪಡೆದ ಸಾಧನೆ ಒತ್ತಿದರೆ ಹಂಚಿಕೊಳ್ಳಬಹುದು. ಬಾಕಿ ಇರುವುದನ್ನು ಒತ್ತಿದರೆ ಅದನ್ನು ಪಡೆಯುವ ಪಾಠಕ್ಕೆ ಹೋಗುತ್ತದೆ.</p>
         <div className="badges">
           {BADGES.map((b) => {
             const on = s.badges.includes(b.id);
-            return <button type="button" key={b.id} className={`badge${on ? " on" : ""}`} disabled={!on} onClick={() => api.share(shareBadge(b, s))}>
-              <b>{on ? "🏅" : "○"} {b.t}</b><span>{b.d}</span></button>;
+            if (on) return (
+              <button type="button" key={b.id} className="badge on" onClick={() => api.share(shareBadge(b, s))}>
+                <b>🏅 {b.t}</b><span>{b.d}</span></button>
+            );
+            const [done, need] = b.p(s);
+            const now = Math.min(done, need), pct = Math.round((100 * now) / need);
+            return (
+              <button type="button" key={b.id} className="badge todo" onClick={() => earn(b)}
+                aria-label={`${b.t} — ${b.d}. ${now} / ${need}. ${b.h}`}>
+                <b>○ {b.t}</b><span>{b.d}</span>
+                <span className="bprog" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
+                <span className="bhint">{now} / {need} · {b.h} →</span>
+              </button>
+            );
           })}
         </div>
 

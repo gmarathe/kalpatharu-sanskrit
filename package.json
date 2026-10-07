@@ -1,6 +1,6 @@
 {
   "name": "kalpatharu-sanskrit",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್ — Kannada-first Sanskrit learning PWA",
   "scripts": {
     "build": "node build.mjs",

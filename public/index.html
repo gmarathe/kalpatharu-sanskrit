@@ -181,6 +181,10 @@ h1,h2{color:var(--maroon);margin:0 0 8px;line-height:1.35} h1{font-size:24px} h2
 .badges{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .badge{display:flex;flex-direction:column;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer;opacity:.55;line-height:1.45}
 .badge.on{opacity:1;border-color:var(--gold)} .badge span{font-size:13px;color:var(--soft)} .badge b{color:var(--maroon)}
+.badge.todo{opacity:1;border-style:dashed} .badge.todo b{color:var(--soft)}
+.bprog{display:block;height:5px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+.bprog i{display:block;height:100%;background:var(--gold);border-radius:3px;transition:width .3s}
+.badge .bhint{font-size:12.5px;color:var(--gold);font-weight:700;margin-top:5px}
 .switch{display:flex;gap:12px;align-items:center;min-height:44px;font-size:16px;cursor:pointer}
 .switch input{width:22px;height:22px;accent-color:var(--maroon)}
 .seg{display:flex;border:1.5px solid var(--maroon);border-radius:10px;overflow:hidden;margin-top:6px}
@@ -212,6 +216,6 @@ h1,h2{color:var(--maroon);margin:0 0 8px;line-height:1.35} h1{font-size:24px} h2
 <body>
 <div id="root"></div>
 <noscript>ಈ ಆ್ಯಪ್‌ಗೆ JavaScript ಬೇಕು.</noscript>
-<script src="/app.js?v=46195d0bd8" defer></script>
+<script src="/app.js?v=61c3001c62" defer></script>
 </body>
 </html>
