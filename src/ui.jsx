@@ -138,7 +138,7 @@ export function grammarQ(q, showDeva, g) {
     answer: opts[0], options: shuffle(opts), why: `${q.o[0][1]} (${q.o[0][0]}) — ${q.h}${g?.tip ? " · " + g.tip : ""}` };
 }
 // Questions generated from a lesson's example table: blank one inflected word of a sentence row.
-const STOP = new Set(["अहं", "त्वं", "सः", "सा", "ते", "ताः", "वयं", "यूयं", "भवान्", "भवती", "एषः", "एषा", "एतत्", "तत्", "अस्ति", "सन्ति", "मम", "तव", "कृपया", "अत्र", "तत्र", "एकः", "एका", "एकम्", "द्वौ", "द्वे", "त्रीणि", "कति", "च", "किं", "सह"]);
+const STOP = new Set(["अहं", "अहम्", "त्वं", "त्वम्", "सः", "सा", "ते", "ताः", "वयं", "वयम्", "यूयं", "यूयम्", "भवान्", "भवती", "एषः", "एषा", "एतत्", "तत्", "अस्ति", "सन्ति", "मम", "तव", "कृपया", "अत्र", "तत्र", "एकः", "एका", "एकम्", "द्वौ", "द्वे", "त्रीणि", "कति", "च", "किं", "किम्", "सह", "ह्यः", "श्वः", "अद्य", "माता", "पिता", "बालकः", "बालकाः", "बालिका"]);
 const stripP = (t) => t.replace(/[।?,]/g, "");
 const rowToks = (r) => [r[1].trim().split(/\s+/), r[2].trim().split(/\s+/)];
 const sentRows = (g) => g.rows.filter((r) => !/[→·]/.test(r[1]) && rowToks(r)[0].length >= 2 && rowToks(r)[0].length === rowToks(r)[1].length);
