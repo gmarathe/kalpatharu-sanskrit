@@ -5,14 +5,16 @@ import {
   visWords, visSents, visDias, visGram, visSubh, visRead, gradeItem, wordState, isDue, touch, usageOf,
   challengeOfWeek, shareWord, shareSentence, shareLesson, shareBadge, shareChallenge, shareFree, shareSubhashita,
   inviteText, exportCode, importCode, transferLink, WA_GROUP, APP_URL,
-  planToday, markPlan, seedSrs, reminderIcs, reminderWa,
+  planToday, markPlan, seedSrs, reminderIcs, reminderWa, dayKey,
 } from "./lib.js";
+import { mergeState, itemCount } from "./merge.js";
+import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi } from "./sync.js";
 import {
   Btn, Header, Bar, ScriptCard, Parts, SrcLine, Quiz, FS,
   wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "2.4";
+const VERSION = "2.5";
 
 /* ── badges ─────────────────────────────────────────────── */
 // g: earned?  p: [done, needed] progress  go: where to go to earn it  h: hint shown on the locked card
@@ -49,6 +51,10 @@ export default function App() {
   const [sheet, setSheet] = useState(null);   // { kind:"share"|"report"|"import", ... }
   const [toast, setToast] = useState(null);
   const toastT = useRef();
+  const sRef = useRef(null);
+  // cloud save: cfg from /api/config, auth token in localStorage, user profile from server
+  const [cloud, setCloud] = useState({ cfg: null, auth: getAuth(), user: null, status: "idle", at: null });
+  const syncT = useRef({ timer: null, busy: false, again: false });
 
   useEffect(() => {
     const checkHash = () => {
@@ -57,9 +63,19 @@ export default function App() {
       try { setSheet({ kind: "import", data: importCode(m[1]) }); } catch { flash("ಈ ವರ್ಗಾವಣೆ ಲಿಂಕ್ ಸರಿಯಿಲ್ಲ."); }
       history.replaceState(null, "", location.pathname);
     };
-    load().then((st) => { setS(st); checkHash(); });
+    load().then((st) => { sRef.current = st; setS(st); checkHash(); });
+    getConfig().then((cfg) => {
+      setCloud((c) => ({ ...c, cfg }));
+      const a = getAuth();
+      if (cfg.enabled && a) {
+        fetchMe(a.token).then((r) => setCloud((c) => ({ ...c, user: r.user })), (e) => { if (e.status === 401) signedOut(); });
+        setTimeout(syncNow, 1500);
+      }
+    });
+    const onHide = () => { if (document.visibilityState === "hidden" && syncT.current.timer) { clearTimeout(syncT.current.timer); syncT.current.timer = null; syncNow(); } };
+    document.addEventListener("visibilitychange", onHide);
     addEventListener("hashchange", checkHash);
-    return () => removeEventListener("hashchange", checkHash);
+    return () => { removeEventListener("hashchange", checkHash); document.removeEventListener("visibilitychange", onHide); };
   }, []);
   useEffect(() => { if (s) document.documentElement.classList.toggle("hc", !!s.contrast); }, [s?.contrast]);
 
@@ -69,23 +85,78 @@ export default function App() {
     toastT.current = setTimeout(() => setToast(null), action ? 6000 : 2600);
   }
 
-  // every state change: apply, award badges, persist
-  const update = (fn) => setS((prev) => {
+  function signedOut() { setAuth(null); setCloud((c) => ({ ...c, auth: null, user: null, status: "idle" })); }
+
+  async function syncNow() {
+    const a = getAuth();
+    if (!a || !sRef.current) return;
+    const t = syncT.current;
+    if (t.busy) { t.again = true; return; }
+    t.busy = true; t.again = false;
+    setCloud((c) => ({ ...c, status: "saving" }));
+    try {
+      const r = await pushState(a.token, sRef.current);
+      update((st) => mergeState(st, r.state), { nolog: true, nosync: true });
+      setCloud((c) => ({ ...c, status: "ok", at: r.at }));
+    } catch (e) {
+      if (e.status === 401) signedOut();
+      else setCloud((c) => ({ ...c, status: "error" }));
+    } finally {
+      t.busy = false;
+      if (t.again) scheduleSync();
+    }
+  }
+  function scheduleSync() {
+    if (!getAuth()) return;
+    clearTimeout(syncT.current.timer);
+    syncT.current.timer = setTimeout(() => { syncT.current.timer = null; syncNow(); }, 4000);
+  }
+
+  // every state change: apply, award badges, log today's activity, persist, sync
+  const update = (fn, opt = {}) => setS((prev) => {
     let n = typeof fn === "function" ? fn(prev) : { ...prev, ...fn };
+    if (n === prev) return prev;
     const fresh = BADGES.filter((b) => b.g(n) && !n.badges.includes(b.id));
     if (fresh.length) {
       n = { ...n, badges: [...n.badges, ...fresh.map((b) => b.id)] };
       const b = fresh[fresh.length - 1];
       setTimeout(() => flash(`🏅 ಹೊಸ ಸಾಧನೆ: ${b.t}`, { label: "ಹಂಚಿಕೊಳ್ಳಿ", run: () => setSheet({ kind: "share", text: shareBadge(b, n) }) }), 50);
     }
+    if (!opt.nolog) n = logToday(prev, n);
     save(n);
+    sRef.current = n;
+    if (!opt.nosync) scheduleSync();
     return n;
   });
 
   if (!s) return <div className="ks"><div className="loading">ಸಿದ್ಧವಾಗುತ್ತಿದೆ…</div></div>;
 
+  const cloudApi = {
+    login: async (credential) => {
+      try {
+        const r = await signInGoogle(credential);
+        setAuth({ token: r.token });
+        setCloud((c) => ({ ...c, auth: { token: r.token }, user: r.user }));
+        if (r.state) update((st) => mergeState(st, r.state), { nolog: true, nosync: true });
+        flash(r.state ? "ಲಾಗಿನ್ ಆಯಿತು. ನಿಮ್ಮ ಪ್ರಗತಿ ಮರಳಿ ಬಂದಿದೆ ☁️" : "ಲಾಗಿನ್ ಆಯಿತು. ಪ್ರಗತಿ ಉಳಿಸಲಾಗುತ್ತಿದೆ ☁️");
+        setTimeout(syncNow, 300);
+      } catch { flash("ಲಾಗಿನ್ ಆಗಲಿಲ್ಲ. ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ."); }
+    },
+    profile: async (data) => {
+      const a = getAuth(); if (!a) return false;
+      try { const r = await saveProfile(a.token, data); setCloud((c) => ({ ...c, user: r.user })); return true; }
+      catch (e) {
+        if (e.status === 401) signedOut();
+        flash(e.message === "bad_phone" ? "ಮೊಬೈಲ್ ಸಂಖ್ಯೆ ಸರಿಯಿಲ್ಲ. 10 ಅಂಕಿಯ ಸಂಖ್ಯೆ ಹಾಕಿ." : "ಉಳಿಸಲು ಆಗಲಿಲ್ಲ. ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ.");
+        return false;
+      }
+    },
+    logout: async () => { const a = getAuth(); if (a) await logout(a.token); signedOut(); flash("ಲಾಗ್ ಔಟ್ ಆಯಿತು. ಈ ಫೋನಿನ ಪ್ರಗತಿ ಹಾಗೆಯೇ ಇದೆ."); },
+    syncNow,
+  };
+
   const api = {
-    s, update, flash,
+    s, update, flash, cloud, cloudApi,
     go: setView, close: () => setView(null),
     share: (text) => setSheet({ kind: "share", text }),
     report: (kind, id, label) => setSheet({ kind: "report", r: { kind, id, label } }),
@@ -243,6 +314,21 @@ function Home({ api, setTab }) {
       </div>
     </>
   );
+}
+
+// today's line in the activity log: new items finished, and whether the day's plan is complete
+function logToday(prev, n) {
+  const today = dayKey();
+  const added = Math.max(0, itemCount(n) - itemCount(prev));
+  const p = n.plan;
+  const planDone = !!(p && p.day === today && p.w && p.s && p.u && (p.r || !dueItems(n).length));
+  const active = n.lastDay === today;
+  if (!added && !planDone && !active) return n;
+  const log = n.log || {};
+  const cur = log[today];
+  const nx = { n: (cur?.n || 0) + added, p: cur?.p || planDone ? 1 : 0 };
+  if (cur && cur.n === nx.n && cur.p === nx.p) return n;
+  return { ...n, log: { ...log, [today]: nx } };
 }
 
 function dueItems(s) {
@@ -998,9 +1084,13 @@ function Me({ api, setTab }) {
           </>)}
         </div>
 
+        <CloudCard api={api} />
+
         <div className="sec-t">ಪ್ರಗತಿಯ ಬ್ಯಾಕಪ್</div>
         <div className="card">
-          <p className="small">ನಿಮ್ಮ ಪ್ರಗತಿ ಈ ಫೋನಿನ ಬ್ರೌಸರ್‌ನಲ್ಲಿ ಮಾತ್ರ ಉಳಿಯುತ್ತದೆ. ಫೋನ್ ಬದಲಿಸುವ ಮೊದಲು ಅಥವಾ ಬ್ರೌಸರ್ ಡೇಟಾ ಅಳಿಸುವ ಮೊದಲು ಈ ಲಿಂಕ್ ಅನ್ನು ನಿಮಗೇ ಕಳಿಸಿಕೊಳ್ಳಿ. ಅದನ್ನು ಒತ್ತಿದರೆ ಪ್ರಗತಿ ಮರಳಿ ಬರುತ್ತದೆ.</p>
+          <p className="small">{api.cloud.auth
+            ? "ನಿಮ್ಮ ಪ್ರಗತಿ ಈಗಾಗಲೇ Google ಖಾತೆಯಲ್ಲಿ ಉಳಿಯುತ್ತಿದೆ. ಬೇಕಿದ್ದರೆ ಈ ಲಿಂಕ್ ಅನ್ನೂ ಹೆಚ್ಚುವರಿ ಬ್ಯಾಕಪ್ ಆಗಿ ಇಟ್ಟುಕೊಳ್ಳಬಹುದು."
+            : "ಲಾಗಿನ್ ಆಗದಿದ್ದರೆ ನಿಮ್ಮ ಪ್ರಗತಿ ಈ ಫೋನಿನ ಬ್ರೌಸರ್‌ನಲ್ಲಿ ಮಾತ್ರ ಉಳಿಯುತ್ತದೆ. ಫೋನ್ ಬದಲಿಸುವ ಮೊದಲು ಅಥವಾ ಬ್ರೌಸರ್ ಡೇಟಾ ಅಳಿಸುವ ಮೊದಲು ಈ ಲಿಂಕ್ ಅನ್ನು ನಿಮಗೇ ಕಳಿಸಿಕೊಳ್ಳಿ. ಅದನ್ನು ಒತ್ತಿದರೆ ಪ್ರಗತಿ ಮರಳಿ ಬರುತ್ತದೆ."}</p>
           <div className="row two">
             <Btn small kind="line" onClick={() => copy(transferLink(s), "ವರ್ಗಾವಣೆ ಲಿಂಕ್ ನಕಲಾಗಿದೆ")}>ಲಿಂಕ್ ನಕಲಿಸಿ</Btn>
             <a className="btn btn-line small" href={`https://wa.me/?text=${encodeURIComponent("ನನ್ನ ಸಂಸ್ಕೃತ ಮಂಡಲದ ಪ್ರಗತಿ:\n" + transferLink(s))}`} target="_blank" rel="noopener">ವಾಟ್ಸಾಪ್‌ಗೆ ಕಳಿಸಿ</a>
@@ -1015,6 +1105,77 @@ function Me({ api, setTab }) {
       </div>
     </>
   );
+}
+
+/* ═══════════════════ cloud save (Google) ═══════════════════ */
+function CloudCard({ api }) {
+  const { cloud, cloudApi, flash } = api;
+  const btnRef = useRef(null);
+  const [phone, setPhone] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [board, setBoard] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [editPhone, setEditPhone] = useState(false);
+  const cfg = cloud.cfg;
+  const u = cloud.user;
+
+  useEffect(() => {
+    if (!cfg?.enabled || cloud.auth || !btnRef.current) return;
+    let live = true;
+    loadGsi().then((g) => {
+      if (!live || !btnRef.current) return;
+      g.accounts.id.initialize({ client_id: cfg.googleClientId, callback: (r) => cloudApi.login(r.credential) });
+      g.accounts.id.renderButton(btnRef.current, { theme: "outline", size: "large", shape: "pill", text: "signin_with", locale: "kn" });
+    }, () => flash("Google ಲಾಗಿನ್ ತೆರೆಯಲು ಆಗಲಿಲ್ಲ. ಇಂಟರ್ನೆಟ್ ಪರಿಶೀಲಿಸಿ."));
+    return () => { live = false; };
+  }, [cfg?.enabled, cloud.auth]);
+
+  useEffect(() => { if (u) setBoard(u.board); }, [u?.board]);
+
+  if (!cfg?.enabled) return null;
+
+  const savePhone = async () => {
+    setBusy(true);
+    const ok = await cloudApi.profile({ phone, consent: true, board });
+    setBusy(false);
+    if (ok) { setEditPhone(false); setPhone(""); flash("ಉಳಿಸಲಾಗಿದೆ 🙏"); }
+  };
+  const toggleBoard = async () => { const v = !board; setBoard(v); if (!(await cloudApi.profile({ board: v }))) setBoard(!v); };
+  const when = cloud.at ? new Date(cloud.at).toLocaleTimeString("kn-IN", { hour: "2-digit", minute: "2-digit" }) : null;
+  const status = cloud.status === "saving" ? "ಉಳಿಸಲಾಗುತ್ತಿದೆ…"
+    : cloud.status === "error" ? "ಈಗ ಉಳಿಸಲು ಆಗಲಿಲ್ಲ. ಇಂಟರ್ನೆಟ್ ಬಂದಾಗ ತಾನಾಗಿ ಉಳಿಯುತ್ತದೆ."
+    : when ? `ಪ್ರಗತಿ ಉಳಿಸಲಾಗಿದೆ ☁️ (${when})` : "ಪ್ರಗತಿ ತಾನಾಗಿ ಉಳಿಯುತ್ತದೆ ☁️";
+
+  return (<>
+    <div className="sec-t">ಕ್ಲೌಡ್ ಉಳಿಕೆ</div>
+    <div className="card">
+      {!cloud.auth ? (<>
+        <p className="small">Google ಖಾತೆಯಿಂದ ಒಮ್ಮೆ ಲಾಗಿನ್ ಆದರೆ ನಿಮ್ಮ ಪ್ರಗತಿ ಸುರಕ್ಷಿತವಾಗಿ ಉಳಿಯುತ್ತದೆ. ಹೊಸ ಫೋನಿನಲ್ಲಿ ಅದೇ ಖಾತೆಯಿಂದ ಲಾಗಿನ್ ಆದರೆ ಪ್ರಗತಿ ಮರಳಿ ಬರುತ್ತದೆ.</p>
+        <div ref={btnRef} className="gbtn" />
+        <p className="muted small">ವಾಟ್ಸಾಪ್ ಒಳಗಿನ ಬ್ರೌಸರ್‌ನಲ್ಲಿ ಲಾಗಿನ್ ಆಗದಿದ್ದರೆ, ಈ ಪುಟವನ್ನು Chrome ಅಥವಾ Safari‌ನಲ್ಲಿ ತೆರೆಯಿರಿ.</p>
+      </>) : (<>
+        <p className="small"><b>{u?.email || "Google ಖಾತೆ"}</b><br />{status}</p>
+        {u && (!u.phone || editPhone) ? (<>
+          <div className="muted small" style={{ marginTop: 8 }}>ನಿಮ್ಮ ಮೊಬೈಲ್ ಸಂಖ್ಯೆ</div>
+          <div className="row"><input className="input" type="tel" inputMode="tel" autoComplete="tel" placeholder="98xxxxxxxx"
+            value={phone} onChange={(e) => setPhone(e.target.value)} aria-label="ಮೊಬೈಲ್ ಸಂಖ್ಯೆ" /></div>
+          <label className="switch"><input type="checkbox" checked={consent} onChange={() => setConsent(!consent)} /> ನನ್ನ ಸಂಖ್ಯೆಯನ್ನು ಕಲ್ಪತರು ತಂಡ ನನ್ನನ್ನು ಸಂಪರ್ಕಿಸಲು ಮಾತ್ರ ಬಳಸಬಹುದು.</label>
+          <label className="switch"><input type="checkbox" checked={board} onChange={() => setBoard(!board)} /> ಮಂಡಲದ ವಾರದ ಸಾಧಕರ ಪಟ್ಟಿಯಲ್ಲಿ ನನ್ನ ಹೆಸರು ತೋರಿಸಬಹುದು.</label>
+          <div className="row two">
+            {editPhone && <Btn small kind="line" onClick={() => setEditPhone(false)}>ಬೇಡ</Btn>}
+            <Btn small disabled={busy || !consent || phone.replace(/\D/g, "").length < 10} onClick={savePhone}>ಉಳಿಸಿ</Btn>
+          </div>
+        </>) : u ? (<>
+          <p className="small">📱 {u.phone} <button type="button" className="link" onClick={() => setEditPhone(true)}>ಬದಲಿಸಿ</button></p>
+          <label className="switch"><input type="checkbox" checked={board} onChange={toggleBoard} /> ಮಂಡಲದ ವಾರದ ಸಾಧಕರ ಪಟ್ಟಿಯಲ್ಲಿ ನನ್ನ ಹೆಸರು ತೋರಿಸಬಹುದು.</label>
+        </>) : null}
+        <div className="row two" style={{ marginTop: 8 }}>
+          <Btn small kind="line" disabled={cloud.status === "saving"} onClick={cloudApi.syncNow}>ಈಗ ಉಳಿಸಿ</Btn>
+          <Btn small kind="line" onClick={cloudApi.logout}>ಲಾಗ್ ಔಟ್</Btn>
+        </div>
+      </>)}
+    </div>
+  </>);
 }
 
 /* ═══════════════════ sheets ═══════════════════ */
@@ -1063,31 +1224,8 @@ function ReportSheet({ r, close, api }) {
   );
 }
 
-function mergeState(a, b) {
-  const srs = { ...a.srs };
-  for (const [k, v] of Object.entries(b.srs || {})) if (!srs[k] || v.lvl > srs[k].lvl) srs[k] = v;
-  const later = (a.lastDay || "") >= (b.lastDay || "") ? a : b;
-  return {
-    ...a,
-    name: a.name || b.name, onboarded: true,
-    learned: [...new Set([...a.learned, ...b.learned])],
-    sentences: [...new Set([...a.sentences, ...b.sentences])],
-    dialogues: [...new Set([...a.dialogues, ...b.dialogues])],
-    grammar: [...new Set([...a.grammar, ...(b.grammar || [])])],
-    subhashitas: [...new Set([...a.subhashitas, ...(b.subhashitas || [])])],
-    readings: [...new Set([...a.readings, ...(b.readings || [])])],
-    badges: [...new Set([...a.badges, ...b.badges])],
-    mistakes: [...new Set([...a.mistakes, ...b.mistakes])],
-    reports: [...a.reports, ...b.reports.filter((r) => !a.reports.some((x) => x.kind === r.kind && x.id === r.id))],
-    srs, xp: Math.max(a.xp, b.xp), streak: later.streak, lastDay: later.lastDay,
-    challengeTicks: { ...b.challengeTicks, ...a.challengeTicks },
-    shares: Math.max(a.shares, b.shares), l0done: a.l0done || b.l0done,
-    plan: (a.plan?.day || "") >= (b.plan?.day || "") ? a.plan : b.plan,
-  };
-}
-
 function ImportSheet({ api, data, close }) {
-  const doIt = () => { api.update((st) => mergeState(st, data)); close(); api.flash("ಪ್ರಗತಿ ಮರಳಿ ಬಂದಿದೆ 🌿"); };
+  const doIt = () => { api.update((st) => mergeState(st, data), { nolog: true }); close(); api.flash("ಪ್ರಗತಿ ಮರಳಿ ಬಂದಿದೆ 🌿"); };
   return (
     <Sheet close={close} label="ಪ್ರಗತಿ ಮರಳಿ ತನ್ನಿ">
       <div className="sheet-t">ಹಳೆಯ ಪ್ರಗತಿ ಸಿಕ್ಕಿದೆ</div>

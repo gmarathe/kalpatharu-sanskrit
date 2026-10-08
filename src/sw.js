@@ -16,6 +16,7 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
   const url = new URL(req.url);
+  if (url.pathname.startsWith("/api/")) return; // never cache the cloud API
   const staticAsset = url.pathname.startsWith("/fonts/") || url.pathname.startsWith("/icons/");
   if (staticAsset) {
     e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {

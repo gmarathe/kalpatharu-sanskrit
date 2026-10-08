@@ -1,12 +1,24 @@
 {
-  // Cloudflare Worker — static files only (no server code, so it uses
-  // none of the account's daily Worker request quota).
+  // Cloudflare Worker: static files from public/ + a small API at /api/*.
+  // Only /api/* runs Worker code (run_worker_first); pages, fonts and the app
+  // itself are served as static assets and use none of the Worker request quota.
   "name": "kalpatharu-sanskrit",
+  "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   "assets": {
     "directory": "./public",
-    "not_found_handling": "single-page-application"
-  }
-  // ಡೊಮೈನ್ ಜೋಡಿಸಲು: Cloudflare ಡ್ಯಾಶ್‌ಬೋರ್ಡ್ → ಈ Worker → Settings →
-  // Domains & Routes → Add → Custom domain → ksm.kalpatharu.org
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  // ಪ್ರಗತಿ ಉಳಿಸುವ ಡೇಟಾಬೇಸ್. ಮೊದಲ deploy ನಲ್ಲಿ Cloudflare ತಾನಾಗಿ ಸೃಷ್ಟಿಸುತ್ತದೆ
+  // (wrangler 4.45+). ಕೋಷ್ಟಕಗಳನ್ನು Worker ಮೊದಲ ಕರೆಯಲ್ಲೇ ಸೃಷ್ಟಿಸುತ್ತದೆ.
+  "d1_databases": [{ "binding": "DB", "database_name": "kalpatharu-sanskrit" }],
+  "vars": {
+    // Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web).
+    // ಇದು ರಹಸ್ಯವಲ್ಲ. ಖಾಲಿ ಇದ್ದರೆ ಆ್ಯಪ್‌ನಲ್ಲಿ ಲಾಗಿನ್ ಕಾರ್ಡ್ ಕಾಣಿಸುವುದಿಲ್ಲ.
+    "GOOGLE_CLIENT_ID": ""
+  },
+  "observability": { "enabled": true }
+  // ಡೊಮೈನ್: ksm.kalpatharu.org (Worker → Settings → Domains & Routes)
 }

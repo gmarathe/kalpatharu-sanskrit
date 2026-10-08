@@ -31,6 +31,7 @@ export const EMPTY = {
   reports: [],        // { kind:"w"|"s"|"d"|"g"|"u"|"r", id, label, on }
   l0done: false,
   plan: null,         // { day:"YYYY-MM-DD", w, s, r, u } — ಇಂದಿನ ಯೋಜನೆಯ ಗುರುತುಗಳು
+  log: {},            // "YYYY-MM-DD" → { n: ಹೊಸ ಐಟಂಗಳು, p: ಯೋಜನೆ ಪೂರ್ಣ 0|1 } — ವಾರದ ಅಂಕಗಳಿಗೆ
 };
 
 /* ── daily plan ─────────────────────────────────────────── */
@@ -138,7 +139,7 @@ export const shareSubhashita = (v, s) => `${HEAD}\nಇಂದಿನ ಸುಭಾ�
 export const inviteText = (s) => `${HEAD}\nನಾನು ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲದಲ್ಲಿ ಸಂಸ್ಕೃತ ಕಲಿಯಲು ಶುರು ಮಾಡಿದ್ದೇನೆ.\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ ಸಾಕು. ನೀವೂ ಜೊತೆಗೆ ಕಲಿಯುತ್ತೀರಾ?\n\nಆ್ಯಪ್: ${APP_URL}\nಮಂಡಲಕ್ಕೆ ಸೇರಲು: ${WA_GROUP}\n\n— ${s.name}\n${FOOT}`;
 
 /* ── progress backup / transfer ─────────────────────────── */
-const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "plan", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "schema"];
+const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "plan", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "log", "schema"];
 const b64u = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
 export function exportCode(s) {

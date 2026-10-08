@@ -4,7 +4,7 @@
 ಗುರಿ: 10,00,000+ ಜನರನ್ನು ಸಂಸ್ಕೃತದೊಂದಿಗೆ ಬೆಸೆಯುವುದು. ಸಂಸ್ಕೃತವನ್ನು ಮೊದಲು ಒಂದು *ಭಾಷೆ*ಯಾಗಿ ತೋರಿಸು, ಧಾರ್ಮಿಕ ವಿಷಯವಾಗಿ ಅಲ್ಲ.
 
 ## ತಂತ್ರಜ್ಞಾನ (stack)
-- React 19 + esbuild (`build.mjs`) → `public/` ; ಸರ್ವರ್ ಕೋಡ್ ಇಲ್ಲ (ಸದ್ಯಕ್ಕೆ).
+- React 19 + esbuild (`build.mjs`) → `public/`. ಸರ್ವರ್: `src/worker.js` (`/api/*` ಮಾತ್ರ) + D1 (`DB`). ವಿಲೀನ: `src/merge.js` (ಆ್ಯಪ್ + ಸರ್ವರ್ ಎರಡಕ್ಕೂ). ಕ್ಲೌಡ್ ಸಿಂಕ್ ಕ್ಲೈಂಟ್: `src/sync.js`.
 - ಹೋಸ್ಟಿಂಗ್: Cloudflare Worker static assets (`wrangler.jsonc`). ಗುರಿ ವಿಳಾಸ: `ksm.kalpatharu.org`. ಹಳೆಯ ಸೈಟ್: Netlify (`resonant-lolly-984bd2.netlify.app`).
 - ಪ್ರಗತಿ ಬ್ರೌಸರ್ ಸ್ಟೋರೇಜ್‌ನಲ್ಲಿ (`src/lib.js` → `load/save/migrate`, `SCHEMA`). ಸ್ಕೀಮಾ ಬದಲಿಸಿದರೆ `migrate()` ನಲ್ಲಿ ಹಳೆಯ ಡೇಟಾ ಉಳಿಸು.
 - ಆಫ್‌ಲೈನ್: `src/sw.js` (service worker), ಸ್ವಂತ ಫಾಂಟ್‌ಗಳು (`public/fonts`).
