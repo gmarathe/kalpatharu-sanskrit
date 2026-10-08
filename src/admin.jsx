@@ -2,6 +2,7 @@
 // Opens only for Google accounts listed in ADMIN_EMAILS (wrangler.jsonc).
 import React, { useEffect, useMemo, useState } from "react";
 import { getAuth, getConfig, fetchMe, fetchAdmin } from "./sync.js";
+import { APP_URL } from "./lib.js";
 
 const fmtDay = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("kn-IN", { day: "numeric", month: "short" }) : "—");
 const daysAgo = (d, today) => (d ? Math.round((new Date(today) - new Date(d)) / 864e5) : null);
@@ -26,6 +27,25 @@ function csv(members) {
   const rows = members.map((m) => [m.name, m.email, m.phone, m.weekPts, m.weekDays, m.words, m.sentences, m.dialogues, m.grammar,
     m.subhashitas, m.readings, m.streak, m.lastDay || "", m.board ? "ಹೌದು" : "ಇಲ್ಲ", new Date(m.joined).toISOString().slice(0, 10)]);
   return "﻿" + [head, ...rows].map((r) => r.map(q).join(",")).join("\n");
+}
+
+// WhatsApp message for the circle — only members who agreed to show their name
+function boardText(d) {
+  const shown = d.members.filter((m) => m.board && m.name && m.weekPts > 0)
+    .sort((a, b) => b.weekPts - a.weekPts || b.weekDays - a.weekDays);
+  const medal = ["🥇", "🥈", "🥉"];
+  const top = shown.slice(0, 10).map((m, i) => `${medal[i] || i + 1 + "."} ${m.name} — ${m.weekPts} ಅಂಕ`);
+  const perfect = shown.filter((m) => m.weekDays === 7).map((m) => m.name);
+  return [
+    "🌿 ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್",
+    `ವಾರದ ಸಾಧಕರು (${fmtDay(d.days[0])} – ${fmtDay(d.days[6])})`,
+    "",
+    ...(top.length ? top : ["ಈ ವಾರ ಪಟ್ಟಿಯಲ್ಲಿ ಯಾರೂ ಇಲ್ಲ."]),
+    ...(perfect.length ? ["", "ಸತತ 7 ದಿನ ಕಲಿತವರು 🌿", perfect.join(", ")] : []),
+    "",
+    "ಎಲ್ಲರಿಗೂ ಅಭಿನಂದನೆಗಳು 🙏 ದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ ಸಾಕು.",
+    `ಆ್ಯಪ್: ${APP_URL}`,
+  ].join("\n");
 }
 
 export default function Admin() {
@@ -104,6 +124,16 @@ export default function Admin() {
       </div>
 
       <div className="card">
+        <div className="sec-t">ವಾರದ ಸಾಧಕರ ಸಂದೇಶ</div>
+        <p className="small">ಮೇಲಿನ ವಾರದ ಮೊದಲ 10 ಸಾಧಕರು ಮತ್ತು ಸತತ 7 ದಿನ ಕಲಿತವರು. ಪಟ್ಟಿಗೆ ಒಪ್ಪಿದವರ ಹೆಸರು ಮಾತ್ರ ಸೇರುತ್ತದೆ. {d.isCurrent ? "ವಾರ ಇನ್ನೂ ನಡೆಯುತ್ತಿದೆ — ಸೋಮವಾರ ಬೆಳಿಗ್ಗೆ ಹಿಂದಿನ ವಾರಕ್ಕೆ (←) ಹೋಗಿ ಕಳಿಸುವುದು ಉತ್ತಮ." : ""}</p>
+        <pre className="adm-msg">{boardText(d)}</pre>
+        <div className="row two">
+          <button type="button" className="btn btn-line small" onClick={() => navigator.clipboard?.writeText(boardText(d)).then(() => alertOnce("ನಕಲಾಗಿದೆ"))}>ನಕಲಿಸಿ</button>
+          <a className="btn btn-solid small" href={`https://wa.me/?text=${encodeURIComponent(boardText(d))}`} target="_blank" rel="noopener">ವಾಟ್ಸಾಪ್‌ಗೆ ಕಳಿಸಿ</a>
+        </div>
+      </div>
+
+      <div className="card">
         <div className="adm-tools">
           <div className="seg">{FILTERS.map(([k, l]) => (
             <button type="button" key={k} className={filter === k ? "on" : ""} aria-pressed={filter === k} onClick={() => setFilter(k)}>{l}</button>))}</div>
@@ -146,6 +176,11 @@ export default function Admin() {
       <p className="muted small">"ಇತರ" = ಸಂವಾದ + ವ್ಯಾಕರಣ + ಸುಭಾಷಿತ + ವಾಚನ. "ಪಟ್ಟಿ" ✓ = ವಾರದ ಸಾಧಕರ ಪಟ್ಟಿಯಲ್ಲಿ ಹೆಸರು ತೋರಿಸಲು ಒಪ್ಪಿದ್ದಾರೆ. ಮೊಬೈಲ್ ಸಂಖ್ಯೆ ಒತ್ತಿದರೆ ವಾಟ್ಸಾಪ್ ತೆರೆಯುತ್ತದೆ.</p>
     </Shell>
   );
+}
+
+function alertOnce(msg) {
+  const el = document.createElement("div"); el.className = "toast"; el.textContent = msg;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 1800);
 }
 
 function Shell({ children }) {

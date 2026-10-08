@@ -2,7 +2,7 @@
 // wrangler.jsonc). Everything else is served straight from public/ as before.
 //
 // Stage 1: Google sign-in, mobile number, and progress sync to D1.
-import { mergeState, mergeLog } from "./merge.js";
+import { mergeState, mergeLog, weekScore, weekDayKeys } from "./merge.js";
 
 const SESSION_DAYS = 180;
 const MAX_STATE = 512 * 1024;
@@ -135,15 +135,53 @@ const IST = 5.5 * 3600e3;
 const dayNumIST = (ms = now()) => Math.floor((ms + IST) / 864e5);
 const dayKeyOf = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
 const weekOf = (dn) => Math.floor((dn + 3) / 7);
-const weekDays = (wk) => Array.from({ length: 7 }, (_, i) => dayKeyOf(wk * 7 - 3 + i));
 
-// ಸಾಧನಾ ಅಂಕ (max 200/week): day 10 · plan 5 · new items ≤10/day · challenge 5 each + 10 for all three
-function weekPoints(acts, ticks) {
-  let pts = 0, days = 0;
-  for (const a of acts) { days++; pts += 10 + (a.p ? 5 : 0) + Math.min(10, a.n | 0); }
-  const t = (ticks || []).filter(Boolean).length;
-  pts += 5 * t + (t === 3 ? 10 : 0);
-  return { pts, days };
+// everyone's score for week `wk`: Map user_id → { pts, days }
+async function weekScores(db, wk) {
+  const days = weekDayKeys(wk);
+  const acts = (await db.prepare("SELECT user_id, n, p FROM activity WHERE day >= ? AND day <= ?").bind(days[0], days[6]).all()).results;
+  const prog = (await db.prepare("SELECT user_id, ticks FROM progress").all()).results;
+  const byUser = {};
+  for (const a of acts) (byUser[a.user_id] ||= []).push(a);
+  const out = new Map();
+  for (const r of prog) {
+    let ticks = null;
+    try { ticks = JSON.parse(r.ticks || "{}")[wk] || null; } catch {}
+    out.set(r.user_id, { ...weekScore(byUser[r.user_id] || [], ticks), ticks: (ticks || []).filter(Boolean).length });
+    delete byUser[r.user_id];
+  }
+  for (const [uid, list] of Object.entries(byUser)) out.set(uid, { ...weekScore(list, null), ticks: 0 });
+  return { days, scores: out };
+}
+
+const pickWeek = (url, today) => {
+  const w = Number(url.searchParams.get("week"));
+  const cur = weekOf(today);
+  return Number.isFinite(w) && w > 0 && w <= cur ? w : cur;
+};
+
+// ಮಂಡಲದ ವಾರದ ಸಾಧಕರು — names only of members who agreed (board = 1); never phone or email
+async function board(db, url, me) {
+  const today = dayNumIST();
+  const wk = pickWeek(url, today);
+  const { days, scores } = await weekScores(db, wk);
+  const users = (await db.prepare("SELECT id, name, gname, board FROM users").all()).results;
+  const ranked = users
+    .map((u) => ({ id: u.id, name: (u.name || u.gname || "").trim(), board: !!u.board, ...(scores.get(u.id) || { pts: 0, days: 0 }) }))
+    .filter((r) => r.pts > 0)
+    .sort((a, b) => b.pts - a.pts || b.days - a.days || a.name.localeCompare(b.name));
+  const shown = ranked.filter((r) => r.board && r.name);
+  const out = {
+    week: wk, days, isCurrent: wk === weekOf(today), learners: ranked.length,
+    top: shown.slice(0, 10).map((r) => ({ name: r.name, pts: r.pts, days: r.days, me: !!me && r.id === me.id })),
+    perfect: shown.filter((r) => r.days === 7).map((r) => r.name),
+  };
+  if (me) {
+    const i = ranked.findIndex((r) => r.id === me.id);
+    const mine = scores.get(me.id) || { pts: 0, days: 0 };
+    out.me = { pts: mine.pts, days: mine.days, rank: i >= 0 ? i + 1 : null, board: !!me.board };
+  }
+  return out;
 }
 
 const isAdmin = (env, u) => !!u.email && String(env.ADMIN_EMAILS || "").toLowerCase().split(/[\s,]+/).includes(u.email.toLowerCase());
@@ -155,33 +193,27 @@ async function adminSummary(db, url) {
   if (missing.results.length) await db.batch(missing.results.map((r) => progressRow(db, r.user_id, JSON.parse(r.json), t)));
 
   const today = dayNumIST(t);
-  const wkParam = Number(url.searchParams.get("week"));
-  const wk = Number.isFinite(wkParam) && wkParam > 0 ? wkParam : weekOf(today);
-  const days = weekDays(wk);
+  const wk = pickWeek(url, today);
+  const { days, scores } = await weekScores(db, wk);
   const users = (await db.prepare(
     `SELECT u.id, u.email, u.name, u.gname, u.phone, u.board, u.created_at, u.last_seen,
-            p.words, p.sentences, p.dialogues, p.grammar, p.subhashitas, p.readings, p.xp, p.streak, p.last_day, p.ticks
+            p.words, p.sentences, p.dialogues, p.grammar, p.subhashitas, p.readings, p.xp, p.streak, p.last_day
      FROM users u LEFT JOIN progress p ON p.user_id = u.id ORDER BY u.created_at DESC`,
   ).all()).results;
-  const acts = (await db.prepare(`SELECT user_id, day, n, p FROM activity WHERE day >= ? AND day <= ?`).bind(days[0], days[6]).all()).results;
   const lastAct = (await db.prepare(`SELECT user_id, MAX(day) AS d FROM activity GROUP BY user_id`).all()).results;
   const lastMap = Object.fromEntries(lastAct.map((r) => [r.user_id, r.d]));
-  const byUser = {};
-  for (const a of acts) (byUser[a.user_id] ||= []).push(a);
   const todayKey = dayKeyOf(today);
   const weekAgo = dayKeyOf(today - 6);
 
   const members = users.map((u) => {
-    let ticks = null;
-    try { ticks = JSON.parse(u.ticks || "{}")[wk] || null; } catch {}
-    const w = weekPoints(byUser[u.id] || [], ticks);
+    const w = scores.get(u.id) || { pts: 0, days: 0, ticks: 0 };
     const last = [lastMap[u.id], u.last_day].filter(Boolean).sort().pop() || null;
     return {
       name: u.name || u.gname || "", email: u.email, phone: u.phone || "", board: !!u.board,
       joined: u.created_at, seen: u.last_seen, lastDay: last,
       words: u.words | 0, sentences: u.sentences | 0, dialogues: u.dialogues | 0, grammar: u.grammar | 0,
       subhashitas: u.subhashitas | 0, readings: u.readings | 0, xp: u.xp | 0, streak: u.streak | 0,
-      weekPts: w.pts, weekDays: w.days, ticks: (ticks || []).filter(Boolean).length,
+      weekPts: w.pts, weekDays: w.days, ticks: w.ticks,
     };
   });
   const totals = {
@@ -227,6 +259,7 @@ async function route(req, env) {
   }
 
   const u = await currentUser(req, db);
+  if (path === "/api/board" && req.method === "GET") return json(await board(db, url, u));
   if (!u) return fail(401, "signed_out");
 
   if (path === "/api/me" && req.method === "GET") return json({ user: { ...publicUser(u), admin: isAdmin(env, u) } });

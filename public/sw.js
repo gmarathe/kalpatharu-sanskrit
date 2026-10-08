@@ -1,6 +1,6 @@
 // Offline cache. Pages and app code: network first (updates arrive at once),
 // cached copy when offline. Fonts and icons: cache first.
-const CACHE = "ksm-6b141c50b4";
+const CACHE = "ksm-0965e11250";
 const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icons/icon-192.png",
   "/fonts/kn-400.woff2", "/fonts/kn-700.woff2", "/fonts/la-400.woff2", "/fonts/la-700.woff2",
   "/fonts/dv-400.woff2", "/fonts/dv-700.woff2"];

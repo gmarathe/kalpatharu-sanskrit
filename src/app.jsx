@@ -7,14 +7,14 @@ import {
   inviteText, exportCode, importCode, transferLink, WA_GROUP, APP_URL,
   planToday, markPlan, seedSrs, reminderIcs, reminderWa, dayKey,
 } from "./lib.js";
-import { mergeState, itemCount } from "./merge.js";
-import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi } from "./sync.js";
+import { mergeState, itemCount, weekScore, weekDayKeys, WEEK_MAX } from "./merge.js";
+import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi, fetchBoard } from "./sync.js";
 import {
   Btn, Header, Bar, ScriptCard, Parts, SrcLine, Quiz, FS,
   wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "2.6";
+const VERSION = "2.7";
 
 /* ── badges ─────────────────────────────────────────────── */
 // g: earned?  p: [done, needed] progress  go: where to go to earn it  h: hint shown on the locked card
@@ -187,7 +187,7 @@ export default function App() {
           : tab === "home" ? <Home api={api} setTab={setTab} />
           : tab === "learn" ? <Learn api={api} />
           : tab === "practice" ? <Practice api={api} />
-          : tab === "circle" ? <Circle api={api} />
+          : tab === "circle" ? <Circle api={api} setTab={setTab} />
           : <Me api={api} setTab={setTab} />}
       </main>
       {!V && <Nav tab={tab} setTab={setTab} />}
@@ -966,7 +966,7 @@ function Search({ api }) {
 }
 
 /* ═══════════════════ circle ═══════════════════ */
-function Circle({ api }) {
+function Circle({ api, setTab }) {
   const { s } = api;
   const W = visWords(s), S = visSents(s), U = visSubh(s);
   const w = W.length ? W[dayNum() % W.length] : null, x = S.length ? S[dayNum() % S.length] : null, u = U.length ? U[dayNum() % U.length] : null;
@@ -984,6 +984,7 @@ function Circle({ api }) {
     <>
       <Header title="ಸಂಸ್ಕೃತಮಂಡಲಮ್" sub="ನಾವು ಕಲಿತದ್ದನ್ನು ಹಂಚಿಕೊಳ್ಳುವ ಜಾಗ" />
       <div className="pad">
+        <WeekBoard api={api} setTab={setTab} />
         <div className="card"><div className="sec-t">ಇಂದಿನ ಹಂಚಿಕೆ</div><p>{pr.p}</p><Btn wide onClick={() => api.share(pr.t())}>ಸಂದೇಶ ಸಿದ್ಧಪಡಿಸಿ</Btn></div>
         <div className="card"><div className="sec-t">ವಾಟ್ಸಾಪ್ ಮಂಡಲ</div><p>ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲದ ಗುಂಪಿಗೆ ಸೇರಿ. ಅಲ್ಲಿ ಎಲ್ಲರೂ ತಾವು ಕಲಿತದ್ದನ್ನು ಹಂಚಿಕೊಳ್ಳುತ್ತಾರೆ.</p>
           <a className="btn btn-line wide" href={WA_GROUP} target="_blank" rel="noopener">ಗುಂಪಿಗೆ ಸೇರಿ</a></div>
@@ -995,6 +996,88 @@ function Circle({ api }) {
         {s.shares > 0 && <p className="muted center small">ನೀವು ಮಂಡಲದಲ್ಲಿ {s.shares} ಬಾರಿ ಹಂಚಿಕೊಂಡಿದ್ದೀರಿ. ಇದು ನಿಮಗೆ ಮಾತ್ರ ಕಾಣುತ್ತದೆ.</p>}
       </div>
     </>
+  );
+}
+
+/* ═══════════════════ weekly board ═══════════════════ */
+const MEDAL = ["🥇", "🥈", "🥉"];
+function WeekBoard({ api, setTab }) {
+  const { s, cloud } = api;
+  const wk = weekNum();
+  const [which, setWhich] = useState("cur");
+  const [b, setB] = useState(null);
+  const [off, setOff] = useState(false);
+  const signedIn = !!cloud.auth;
+
+  useEffect(() => {
+    if (!cloud.cfg?.enabled) return;
+    let live = true;
+    setOff(false);
+    fetchBoard(getAuth()?.token, which === "cur" ? wk : wk - 1)
+      .then((r) => live && setB(r), () => live && setOff(true));
+    return () => { live = false; };
+  }, [which, signedIn, cloud.at, cloud.cfg?.enabled]);
+
+  if (!cloud.cfg?.enabled) return null;
+  // my score from this phone's own log — shows at once, even offline
+  const mine = weekScore(weekDayKeys(wk).map((d) => s.log?.[d]).filter(Boolean), s.challengeTicks[wk]);
+  const shown = b && b.week === (which === "cur" ? wk : wk - 1) ? b : null;
+  // this phone's count shows at once; the server's (all devices) wins when it is higher
+  const srv = shown?.me || null;
+  const showMine = which === "cur"
+    ? (srv && srv.pts > mine.pts ? srv : mine)
+    : srv;
+
+  return (
+    <div className="card">
+      <div className="sec-t">ಮಂಡಲದ ವಾರದ ಸಾಧಕರು</div>
+      <div className="seg">
+        {[["cur", "ಈ ವಾರ"], ["prev", "ಕಳೆದ ವಾರ"]].map(([k, l]) => (
+          <button type="button" key={k} className={which === k ? "on" : ""} aria-pressed={which === k} onClick={() => setWhich(k)}>{l}</button>))}
+      </div>
+
+      {showMine && (
+        <div className="wb-me">
+          <div><b>{showMine.pts}</b> / {WEEK_MAX} <span className="muted small">ನಿಮ್ಮ ಸಾಧನಾ ಅಂಕ</span></div>
+          <div className="bprog" aria-hidden="true"><i style={{ width: `${Math.min(100, (100 * showMine.pts) / WEEK_MAX)}%` }} /></div>
+          <div className="muted small">ಕಲಿತ ದಿನ {showMine.days}/7{signedIn && shown?.me?.rank ? ` · ಸ್ಥಾನ ${shown.me.rank} (${shown.learners} ಕಲಿಯುವವರಲ್ಲಿ)` : ""}</div>
+        </div>
+      )}
+      {!signedIn && (
+        <p className="small">ನಿಮ್ಮ ಅಂಕ ಮಂಡಲದ ಪಟ್ಟಿಗೆ ಸೇರಲು Google ಖಾತೆಯಿಂದ ಲಾಗಿನ್ ಆಗಿ.{" "}
+          <button type="button" className="link" onClick={() => { setTab("me"); window.scrollTo(0, 0); }}>ಲಾಗಿನ್ →</button></p>
+      )}
+      {signedIn && shown?.me && !shown.me.board && (
+        <p className="muted small">ನಿಮ್ಮ ಹೆಸರು ಪಟ್ಟಿಯಲ್ಲಿ ಕಾಣಬೇಕಾದರೆ "ನಾನು" ಪರದೆಯ ಕ್ಲೌಡ್ ಉಳಿಕೆಯಲ್ಲಿ ಒಪ್ಪಿಗೆಯ ಗುರುತು ಹಾಕಿ.</p>
+      )}
+
+      {off ? <p className="muted small">ಇಂಟರ್ನೆಟ್ ಬಂದಾಗ ಪಟ್ಟಿ ಕಾಣುತ್ತದೆ.</p>
+        : !shown ? <p className="muted small">ಪಟ್ಟಿ ತರಲಾಗುತ್ತಿದೆ…</p>
+        : !shown.top.length ? <p className="muted small">{which === "cur" ? "ಈ ವಾರದ ಪಟ್ಟಿ ಇನ್ನೂ ಖಾಲಿ." : "ಕಳೆದ ವಾರದ ಪಟ್ಟಿ ಖಾಲಿ."}</p>
+        : (<>
+          <ol className="wb-list">
+            {shown.top.map((r, i) => (
+              <li key={i} className={r.me ? "me" : ""}>
+                <span className="wb-r">{MEDAL[i] || i + 1}</span>
+                <span className="wb-n">{r.name}{r.me ? " (ನೀವು)" : ""}</span>
+                <span className="wb-p"><b>{r.pts}</b> <span className="muted small">· {r.days}/7</span></span>
+              </li>
+            ))}
+          </ol>
+          {shown.perfect.length > 0 && <p className="small"><b>ಸತತ 7 ದಿನ 🌿</b><br />{shown.perfect.join(", ")}</p>}
+        </>)}
+
+      <details className="wb-how">
+        <summary className="small">ಅಂಕ ಹೇಗೆ ಸಿಗುತ್ತದೆ?</summary>
+        <ul className="small">
+          <li>ಕಲಿತ ಪ್ರತಿ ದಿನ: 10</li>
+          <li>ಇಂದಿನ ಯೋಜನೆ ಪೂರ್ಣ: 5</li>
+          <li>ಪ್ರತಿ ಹೊಸ ಪದ, ವಾಕ್ಯ ಅಥವಾ ಪಾಠ: 1 (ದಿನಕ್ಕೆ ಗರಿಷ್ಠ 10)</li>
+          <li>ವಾರದ ಸವಾಲಿನ ಪ್ರತಿ ಹೆಜ್ಜೆ: 5, ಮೂರೂ ಮುಗಿದರೆ ಇನ್ನೂ 10</li>
+        </ul>
+        <p className="muted small">ವಾರಕ್ಕೆ ಗರಿಷ್ಠ {WEEK_MAX}. ವಾರ ಸೋಮವಾರದಿಂದ ಭಾನುವಾರ. ದಿನವೂ ಸ್ವಲ್ಪ ಕಲಿಯುವುದೇ ಮುಖ್ಯ.</p>
+      </details>
+    </div>
   );
 }
 
@@ -1061,7 +1144,7 @@ function Me({ api, setTab }) {
 
         <div className="sec-t">ದಿನನಿತ್ಯದ ನೆನಪು</div>
         <div className="card">
-          <p className="small">ಆ್ಯಪ್ ತಾನಾಗಿ ನೆನಪಿಸಲಾರದು (ಸರ್ವರ್ ಇಲ್ಲ). ಫೋನಿನ ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ದಿನನಿತ್ಯದ ನೆನಪು ಸೇರಿಸಿ, ಅಥವಾ ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ನಿಮಗೇ ಒಂದು ಸಂದೇಶ ಕಳಿಸಿ ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ.</p>
+          <p className="small">ಆ್ಯಪ್ ಇನ್ನೂ ತಾನಾಗಿ ನೆನಪಿಸುವುದಿಲ್ಲ. ಫೋನಿನ ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ದಿನನಿತ್ಯದ ನೆನಪು ಸೇರಿಸಿ, ಅಥವಾ ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ನಿಮಗೇ ಒಂದು ಸಂದೇಶ ಕಳಿಸಿ ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ.</p>
           <div className="row"><label className="muted small" htmlFor="remT">ಸಮಯ</label><input id="remT" type="time" className="input" value={remT} onChange={(e) => setRemT(e.target.value)} /></div>
           <div className="row two">
             <a className="btn btn-solid small" href={reminderIcs(remT)} download="sanskrit-daily.ics">ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ಸೇರಿಸಿ</a>

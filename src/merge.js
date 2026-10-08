@@ -61,3 +61,16 @@ export function mergeState(a, b) {
 export const itemCount = (s) =>
   (s.learned?.length || 0) + (s.sentences?.length || 0) + (s.dialogues?.length || 0) +
   (s.grammar?.length || 0) + (s.subhashitas?.length || 0) + (s.readings?.length || 0);
+
+/* ── ಸಾಧನಾ ಅಂಕ — weekly score, max 200 (same rule in the app and on the server) ──
+   each day learned 10 · today's plan complete 5 · new items 1 each (max 10 a day)
+   · weekly challenge 5 per step + 10 when all three are done */
+export const WEEK_MAX = 200;
+export const weekDayKeys = (wk) => Array.from({ length: 7 }, (_, i) => new Date((wk * 7 - 3 + i) * 864e5).toISOString().slice(0, 10));
+export function weekScore(days, ticks) {
+  let pts = 0;
+  for (const a of days) pts += 10 + (a.p ? 5 : 0) + Math.min(10, a.n | 0);
+  const t = (ticks || []).filter(Boolean).length;
+  pts += 5 * t + (t === 3 ? 10 : 0);
+  return { pts, days: days.length };
+}
