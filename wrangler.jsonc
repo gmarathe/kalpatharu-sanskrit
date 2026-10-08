@@ -17,11 +17,13 @@
   "vars": {
     // Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web).
     // ಇದು ರಹಸ್ಯವಲ್ಲ. ಖಾಲಿ ಇದ್ದರೆ ಆ್ಯಪ್‌ನಲ್ಲಿ ಲಾಗಿನ್ ಕಾರ್ಡ್ ಕಾಣಿಸುವುದಿಲ್ಲ.
-    "GOOGLE_CLIENT_ID": "948794395364-rh4a3bjhictvtdnip9misj37o7u48798.apps.googleusercontent.com"
+    "GOOGLE_CLIENT_ID": "948794395364-rh4a3bjhictvtdnip9misj37o7u48798.apps.googleusercontent.com",
+    // ಡ್ಯಾಶ್‌ಬೋರ್ಡ್ (/admin) ತೆರೆಯಬಲ್ಲ Google ಖಾತೆಗಳು — ಅಲ್ಪವಿರಾಮದಿಂದ ಬೇರ್ಪಡಿಸಿ
+    "ADMIN_EMAILS": "gmujire@gmail.com"
   },
   // ಪರೀಕ್ಷಾ (preview) ಆವೃತ್ತಿಗಳು: ಪ್ರತ್ಯೇಕ ಡೇಟಾಬೇಸ್ — ನಿಜವಾದ ಸದಸ್ಯರ ಪ್ರಗತಿ ಮುಟ್ಟುವುದಿಲ್ಲ.
   "previews": {
-    "vars": { "GOOGLE_CLIENT_ID": "" },
+    "vars": { "GOOGLE_CLIENT_ID": "", "ADMIN_EMAILS": "" },
     "d1_databases": [{ "binding": "DB", "database_name": "kalpatharu-sanskrit-preview" }]
   },
   "observability": { "enabled": true }

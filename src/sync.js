@@ -33,6 +33,7 @@ export const signInGoogle = (credential) => call("/api/auth/google", { method: "
 export const fetchMe = (token) => call("/api/me", { token });
 export const saveProfile = (token, data) => call("/api/profile", { method: "POST", data, token });
 export const logout = (token) => call("/api/logout", { method: "POST", token }).catch(() => {});
+export const fetchAdmin = (token, week) => call("/api/admin/summary" + (week ? "?week=" + week : ""), { token });
 export const pushState = (token, state) => call("/api/sync", { method: "POST", data: { state }, token });
 
 // Google Identity Services script, loaded only when the sign-in card is shown

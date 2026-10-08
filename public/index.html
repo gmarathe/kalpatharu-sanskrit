@@ -213,11 +213,35 @@ h1,h2{color:var(--maroon);margin:0 0 8px;line-height:1.35} h1{font-size:24px} h2
 .toast{width:max-content;min-width:min(300px,92vw);position:fixed;left:50%;transform:translateX(-50%);top:max(12px,env(safe-area-inset-top));background:var(--ink);color:var(--leaf);padding:10px 16px;border-radius:12px;font-size:15px;z-index:60;max-width:92vw;display:flex;gap:6px;align-items:center;line-height:1.5}
 .gbtn{min-height:44px;margin:8px 0}
 .switch input{flex-shrink:0}
+
+/* ── dashboard (/admin) ── */
+.adm{max-width:1180px;margin:0 auto;padding:0 16px 40px}
+.adm-hdr{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:18px 0 8px;border-bottom:1px solid var(--line)}
+.adm-week{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 4px;text-align:center}
+.adm-week .btn{min-width:52px}
+.adm-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.adm-tile{margin:0;display:flex;flex-direction:column;gap:2px}
+.adm-tile b{font-size:28px;color:var(--maroon);line-height:1.2}
+.adm-tile span{font-size:14px}
+.adm-tile em{font-style:normal;font-size:12.5px;color:var(--soft)}
+.adm-tools .seg{flex-wrap:wrap}
+.adm-sort{max-width:200px}
+.adm-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -16px;padding:0 16px}
+.adm-table{width:100%;border-collapse:collapse;font-size:15px;min-width:820px}
+.adm-table th{text-align:left;font-size:13px;color:var(--soft);font-weight:600;padding:8px 6px;border-bottom:1.5px solid var(--line);white-space:nowrap}
+.adm-table td{padding:9px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.adm-table .num{text-align:right;font-variant-numeric:tabular-nums}
+.adm-table tr.stopped td{background:var(--warnbg)}
+.adm-table a{color:var(--maroon)}
+.adm-q{min-width:240px}
+.adm-hdr .btn{white-space:nowrap}
+.adm-table td:nth-child(2){min-width:150px}
+@media (max-width:600px){.row .adm-q{flex:1 1 100%}.row .adm-sort{max-width:none;flex:1}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <noscript>ಈ ಆ್ಯಪ್‌ಗೆ JavaScript ಬೇಕು.</noscript>
-<script src="/app.js?v=05e5ee6a75" defer></script>
+<script src="/app.js?v=6b141c50b4" defer></script>
 </body>
 </html>
