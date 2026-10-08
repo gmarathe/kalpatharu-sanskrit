@@ -13,7 +13,7 @@
   },
   // ಪ್ರಗತಿ ಉಳಿಸುವ ಡೇಟಾಬೇಸ್. ಮೊದಲ deploy ನಲ್ಲಿ Cloudflare ತಾನಾಗಿ ಸೃಷ್ಟಿಸುತ್ತದೆ
   // (wrangler 4.45+). ಕೋಷ್ಟಕಗಳನ್ನು Worker ಮೊದಲ ಕರೆಯಲ್ಲೇ ಸೃಷ್ಟಿಸುತ್ತದೆ.
-  "d1_databases": [{ "binding": "DB", "database_name": "kalpatharu-sanskrit" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "kalpatharu-sanskrit", "database_id": "e6ef673e-1789-45b3-9b58-c73f1ffc76ee" }],
   "vars": {
     // Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web).
     // ಇದು ರಹಸ್ಯವಲ್ಲ. ಖಾಲಿ ಇದ್ದರೆ ಆ್ಯಪ್‌ನಲ್ಲಿ ಲಾಗಿನ್ ಕಾರ್ಡ್ ಕಾಣಿಸುವುದಿಲ್ಲ.
