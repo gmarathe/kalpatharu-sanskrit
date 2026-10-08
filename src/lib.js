@@ -3,7 +3,7 @@ import { WORDS, SENTENCES, DIALOGUES, CHALLENGES, GRAMMAR, SUBHASHITAS, READINGS
 
 /* ── config ─────────────────────────────────────────────── */
 // ಈಗ ಆ್ಯಪ್ Netlify ನಲ್ಲಿ ಇದೆ. ksm.kalpatharu.org ಸಿದ್ಧವಾದಾಗ ಇಲ್ಲಿ ಬದಲಿಸಿ.
-export const APP_URL = "https://resonant-lolly-984bd2.netlify.app";
+export const APP_URL = "https://ksm.kalpatharu.org";
 export const WA_GROUP = "https://chat.whatsapp.com/Es2A3rScgTO1EHrQVgq2LP";
 export const SHOW_UNVERIFIED = true; // false ಮಾಡಿದರೆ VERIFIED ವಿಷಯ ಮಾತ್ರ ಕಾಣುತ್ತದೆ
 const KEY = "kalpatharu-sanskrit-v1"; // ಬದಲಿಸಬೇಡಿ — ಹಳೆಯ ಪ್ರಗತಿ ಇದಕ್ಕೇ ಕಟ್ಟಿದೆ
