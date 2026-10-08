@@ -19,6 +19,11 @@
     // ಇದು ರಹಸ್ಯವಲ್ಲ. ಖಾಲಿ ಇದ್ದರೆ ಆ್ಯಪ್‌ನಲ್ಲಿ ಲಾಗಿನ್ ಕಾರ್ಡ್ ಕಾಣಿಸುವುದಿಲ್ಲ.
     "GOOGLE_CLIENT_ID": ""
   },
+  // ಪರೀಕ್ಷಾ (preview) ಆವೃತ್ತಿಗಳು: ಪ್ರತ್ಯೇಕ ಡೇಟಾಬೇಸ್ — ನಿಜವಾದ ಸದಸ್ಯರ ಪ್ರಗತಿ ಮುಟ್ಟುವುದಿಲ್ಲ.
+  "previews": {
+    "vars": { "GOOGLE_CLIENT_ID": "" },
+    "d1_databases": [{ "binding": "DB", "database_name": "kalpatharu-sanskrit-preview" }]
+  },
   "observability": { "enabled": true }
   // ಡೊಮೈನ್: ksm.kalpatharu.org (Worker → Settings → Domains & Routes)
 }
