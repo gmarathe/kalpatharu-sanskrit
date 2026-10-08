@@ -24,8 +24,15 @@ self.addEventListener("fetch", (e) => {
     })));
     return;
   }
-  e.respondWith(fetch(req).then((res) => {
-    if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req.mode === "navigate" ? "/" : url.pathname, copy)); }
+  // network first, but on a weak signal don't wait forever: after 3 s use the saved copy (if there is one);
+  // the network answer still refreshes the cache for next time
+  const key = req.mode === "navigate" ? "/" : url.pathname;
+  const net = fetch(req).then((res) => {
+    if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(key, copy)); }
     return res;
-  }).catch(() => caches.match(req.mode === "navigate" ? "/" : url.pathname).then((hit) => hit || caches.match(req))));
+  });
+  const cached = () => caches.match(key).then((hit) => hit || caches.match(req));
+  const offline = () => cached().then((hit) => hit || Response.error());
+  const slow = new Promise((r) => setTimeout(r, 3000)).then(cached).then((hit) => hit || net);
+  e.respondWith(Promise.race([net.catch(offline), slow.catch(offline)]));
 });

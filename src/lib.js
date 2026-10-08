@@ -2,7 +2,7 @@
 import { WORDS, SENTENCES, DIALOGUES, CHALLENGES, GRAMMAR, SUBHASHITAS, READINGS } from "./content.js";
 
 /* ── config ─────────────────────────────────────────────── */
-// ಈಗ ಆ್ಯಪ್ Netlify ನಲ್ಲಿ ಇದೆ. ksm.kalpatharu.org ಸಿದ್ಧವಾದಾಗ ಇಲ್ಲಿ ಬದಲಿಸಿ.
+// ಆ್ಯಪ್‌ನ ವಿಳಾಸ (Cloudflare). ಹಂಚಿಕೆ ಸಂದೇಶ ಮತ್ತು ವರ್ಗಾವಣೆ ಲಿಂಕ್‌ಗಳಲ್ಲಿ ಬಳಕೆ.
 export const APP_URL = "https://ksm.kalpatharu.org";
 export const WA_GROUP = "https://chat.whatsapp.com/Es2A3rScgTO1EHrQVgq2LP";
 export const SHOW_UNVERIFIED = true; // false ಮಾಡಿದರೆ VERIFIED ವಿಷಯ ಮಾತ್ರ ಕಾಣುತ್ತದೆ
@@ -38,7 +38,7 @@ export const EMPTY = {
 export const planToday = (s) => (s.plan && s.plan.day === dayKey() ? s.plan : { day: dayKey(), w: false, s: false, r: false, u: false });
 export const markPlan = (s, k) => ({ ...s, plan: { ...planToday(s), [k]: true } });
 // first review of a newly learned item is due tomorrow
-export const seedSrs = (s, key) => (s.srs[key] ? s : { ...s, srs: { ...s.srs, [key]: { lvl: 1, due: dayNum() + 1 } } });
+export const seedSrs = (s, key) => (s.srs[key] ? s : { ...s, srs: { ...s.srs, [key]: { lvl: 1, due: dayNum() + 1, at: Date.now() } } });
 
 // V1 → V2: numeric SRS keys become "w<id>", report labels become ids.
 export function migrate(raw) {
@@ -76,7 +76,9 @@ export function save(s) {
 
 /* ── visibility: withdrawn / unverified / reported-by-me ── */
 const okStatus = (x) => x.status !== "WITHDRAWN" && (SHOW_UNVERIFIED || x.status === "VERIFIED");
-const isReported = (s, kind, id) => s.reports.some((r) => r.kind === kind && r.id === id);
+// a report undone with "ಮರಳಿ ತೋರಿಸು" keeps `off` (so the undo survives sync) and no longer hides the item
+export const activeReports = (s) => s.reports.filter((r) => !r.off);
+const isReported = (s, kind, id) => s.reports.some((r) => !r.off && r.kind === kind && r.id === id);
 export const visWords = (s) => WORDS.filter((w) => okStatus(w) && !isReported(s, "w", w.id));
 export const visSents = (s) => SENTENCES.filter((x) => okStatus(x) && !isReported(s, "s", x.id));
 export const visDias = (s) => DIALOGUES.filter((x) => okStatus(x) && !isReported(s, "d", x.id));
@@ -91,7 +93,7 @@ export function gradeItem(s, key, right) {
   const lvl = right ? Math.min(4, cur.lvl + 1) : Math.max(0, cur.lvl - 1);
   const mistakes = right ? s.mistakes.filter((m) => m !== key)
     : s.mistakes.includes(key) ? s.mistakes : [...s.mistakes, key];
-  return { ...s, mistakes, xp: s.xp + (right ? 2 : 0), srs: { ...s.srs, [key]: { lvl, due: dayNum() + INTERVALS[lvl] } } };
+  return { ...s, mistakes, xp: s.xp + (right ? 2 : 0), srs: { ...s.srs, [key]: { lvl, due: dayNum() + INTERVALS[lvl], at: Date.now() } } };
 }
 export function wordState(s, id) {
   if (!s.learned.includes(id)) return 0;               // ಹೊಸದು
@@ -128,12 +130,14 @@ export const challengeOfWeek = () => CHALLENGES[weekNum() % CHALLENGES.length];
 /* ── share texts (plain text, WhatsApp friendly) ────────── */
 const HEAD = "🌿 ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್";
 const FOOT = "ಸಂಸ್ಕೃತಂ ಸಹ ಪಠಾಮಃ 🙏";
-const sig = (s, tag) => `— ${s.name} | ${tag} | 🔥 ${s.streak} ದಿನ`;
+// streak shown only from day 2 — "🔥 1 ದಿನ" on the first day reads oddly
+const fire = (s) => (s.streak >= 2 ? ` | 🔥 ${s.streak} ದಿನ` : "");
+const sig = (s, tag) => `— ${s.name} | ${tag}${fire(s)}`;
 export const shareWord = (w, s) => `${HEAD}\nಇಂದು ನಾನು ಕಲಿತದ್ದು:\n\n${w.d}\n${w.k}\n${w.m}\n\n${sig(s, "ಪದ #" + pad3(w.id))}\n${FOOT}`;
 export const shareSentence = (x, s) => `${HEAD}\nಇಂದಿನ ವಾಕ್ಯ:\n\n${x.d}\n${x.k}\n${x.m}\n\n${sig(s, "ವಾಕ್ಯ #" + pad3(x.id))}\n${FOOT}`;
-export const shareLesson = (ws, s) => `${HEAD}\nಇಂದು ನಾನು ${ws.length} ಹೊಸ ಪದಗಳನ್ನು ಕಲಿತೆ:\n\n${ws.map((w) => `${w.d} — ${w.k} — ${w.m}`).join("\n")}\n\n— ${s.name} | 🔥 ${s.streak} ದಿನ\n${FOOT}`;
-export const shareBadge = (b, s) => `${HEAD}\nಹೊಸ ಸಾಧನೆ: ${b.t} 🏅\n(${b.d})\n\n— ${s.name} | 🔥 ${s.streak} ದಿನ\n${FOOT}`;
-export const shareChallenge = (c, s) => `${HEAD}\nಈ ವಾರದ ಸವಾಲು ಪೂರ್ಣಗೊಳಿಸಿದೆ ✅\n\n${c}\n\n— ${s.name} | 🔥 ${s.streak} ದಿನ\n${FOOT}`;
+export const shareLesson = (ws, s) => `${HEAD}\nಇಂದು ನಾನು ${ws.length === 1 ? "ಒಂದು ಹೊಸ ಪದವನ್ನು" : `${ws.length} ಹೊಸ ಪದಗಳನ್ನು`} ಕಲಿತೆ:\n\n${ws.map((w) => `${w.d} — ${w.k} — ${w.m}`).join("\n")}\n\n— ${s.name}${fire(s)}\n${FOOT}`;
+export const shareBadge = (b, s) => `${HEAD}\nಹೊಸ ಸಾಧನೆ: ${b.t} 🏅\n(${b.d})\n\n— ${s.name}${fire(s)}\n${FOOT}`;
+export const shareChallenge = (c, s) => `${HEAD}\nಈ ವಾರದ ಸವಾಲು ಪೂರ್ಣಗೊಳಿಸಿದೆ ✅\n\n${c}\n\n— ${s.name}${fire(s)}\n${FOOT}`;
 export const shareFree = (prompt, s) => `${HEAD}\n${prompt}\n\n(ಇಲ್ಲಿ ಕನ್ನಡದಲ್ಲಿ ಬರೆಯಿರಿ)\n\n— ${s.name}\n${FOOT}`;
 export const shareSubhashita = (v, s) => `${HEAD}\nಇಂದಿನ ಸುಭಾಷಿತ:\n\n${v.lines.map((l) => l[0]).join("\n")}\n\n${v.lines.map((l) => l[1]).join("\n")}\n\n${v.m}\n(${v.from})\n\n${sig(s, "ಸುಭಾಷಿತ #" + pad3(v.id))}\n${FOOT}`;
 export const inviteText = (s) => `${HEAD}\nನಾನು ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲದಲ್ಲಿ ಸಂಸ್ಕೃತ ಕಲಿಯಲು ಶುರು ಮಾಡಿದ್ದೇನೆ.\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ ಸಾಕು. ನೀವೂ ಜೊತೆಗೆ ಕಲಿಯುತ್ತೀರಾ?\n\nಆ್ಯಪ್: ${APP_URL}\nಮಂಡಲಕ್ಕೆ ಸೇರಲು: ${WA_GROUP}\n\n— ${s.name}\n${FOOT}`;

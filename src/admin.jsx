@@ -23,7 +23,8 @@ const SORTS = [
 
 function csv(members) {
   const head = ["ಹೆಸರು", "ಇಮೇಲ್", "ಮೊಬೈಲ್", "ಈ ವಾರದ ಅಂಕ", "ಈ ವಾರ ಕಲಿತ ದಿನ", "ಪದ", "ವಾಕ್ಯ", "ಸಂವಾದ", "ವ್ಯಾಕರಣ", "ಸುಭಾಷಿತ", "ವಾಚನ", "ಸರಣಿ", "ಕೊನೆಯ ಚಟುವಟಿಕೆ", "ಪಟ್ಟಿಗೆ ಒಪ್ಪಿಗೆ", "ಸೇರಿದ ದಿನ"];
-  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  // leading = + - @ would run as a formula in Excel/Sheets — prefix with '
+  const q = (v) => { let t = String(v ?? ""); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };
   const rows = members.map((m) => [m.name, m.email, m.phone, m.weekPts, m.weekDays, m.words, m.sentences, m.dialogues, m.grammar,
     m.subhashitas, m.readings, m.streak, m.lastDay || "", m.board ? "ಹೌದು" : "ಇಲ್ಲ", new Date(m.joined).toISOString().slice(0, 10)]);
   return "﻿" + [head, ...rows].map((r) => r.map(q).join(",")).join("\n");

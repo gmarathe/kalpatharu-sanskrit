@@ -5,7 +5,7 @@ import {
   visWords, visSents, visDias, visGram, visSubh, visRead, gradeItem, wordState, isDue, touch, usageOf,
   challengeOfWeek, shareWord, shareSentence, shareLesson, shareBadge, shareChallenge, shareFree, shareSubhashita,
   inviteText, exportCode, importCode, transferLink, WA_GROUP, APP_URL,
-  planToday, markPlan, seedSrs, reminderIcs, reminderWa, dayKey,
+  planToday, markPlan, seedSrs, reminderIcs, reminderWa, dayKey, activeReports,
 } from "./lib.js";
 import { mergeState, itemCount, weekScore, weekDayKeys, WEEK_MAX } from "./merge.js";
 import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi, fetchBoard } from "./sync.js";
@@ -14,7 +14,7 @@ import {
   wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "2.7";
+const VERSION = "2.8";
 
 /* ── badges ─────────────────────────────────────────────── */
 // g: earned?  p: [done, needed] progress  go: where to go to earn it  h: hint shown on the locked card
@@ -137,8 +137,18 @@ export default function App() {
         const r = await signInGoogle(credential);
         setAuth({ token: r.token });
         setCloud((c) => ({ ...c, auth: { token: r.token }, user: r.user }));
-        if (r.state) update((st) => mergeState(st, r.state), { nolog: true, nosync: true });
-        flash(r.state ? "ಲಾಗಿನ್ ಆಯಿತು. ನಿಮ್ಮ ಪ್ರಗತಿ ಮರಳಿ ಬಂದಿದೆ ☁️" : "ಲಾಗಿನ್ ಆಯಿತು. ಪ್ರಗತಿ ಉಳಿಸಲಾಗುತ್ತಿದೆ ☁️");
+        const other = sRef.current?.owner && sRef.current.owner !== r.user.id;
+        if (other) {
+          // this phone's progress belongs to another Google account — don't mix two people's learning
+          update((st) => ({
+            ...(r.state ? migrate(r.state) : { ...EMPTY, name: r.user.name || "", onboarded: true }),
+            showDeva: st.showDeva, fontStep: st.fontStep, contrast: st.contrast, owner: r.user.id,
+          }), { nolog: true, nosync: true });
+          flash("ಲಾಗಿನ್ ಆಯಿತು. ಈ ಖಾತೆಯ ಪ್ರಗತಿ ತೆರೆಯಲಾಗಿದೆ ☁️");
+        } else {
+          update((st) => ({ ...(r.state ? mergeState(st, r.state) : st), owner: r.user.id }), { nolog: true, nosync: true });
+          flash(r.state ? "ಲಾಗಿನ್ ಆಯಿತು. ನಿಮ್ಮ ಪ್ರಗತಿ ಮರಳಿ ಬಂದಿದೆ ☁️" : "ಲಾಗಿನ್ ಆಯಿತು. ಪ್ರಗತಿ ಉಳಿಸಲಾಗುತ್ತಿದೆ ☁️");
+        }
         setTimeout(syncNow, 300);
       } catch { flash("ಲಾಗಿನ್ ಆಗಲಿಲ್ಲ. ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ."); }
     },
@@ -227,7 +237,7 @@ function Onboarding({ onDone }) {
       </>)}
       {step === 2 && (<>
         <h2>ನಿಮ್ಮ ಹೆಸರು?</h2>
-        <p className="muted">ನೀವೇ ಹಂಚಿಕೊಳ್ಳುವ ಸಂದೇಶಗಳ ಕೆಳಗೆ ಮಾತ್ರ ಈ ಹೆಸರು ಬರುತ್ತದೆ. ಬೇರೆ ಎಲ್ಲಿಗೂ ಹೋಗುವುದಿಲ್ಲ.</p>
+        <p className="muted">ನೀವು ಹಂಚಿಕೊಳ್ಳುವ ಸಂದೇಶಗಳ ಕೆಳಗೆ ಈ ಹೆಸರು ಬರುತ್ತದೆ. Google ಲಾಗಿನ್ ಆದರೆ ಪ್ರಗತಿಯೊಂದಿಗೆ ಉಳಿಯುತ್ತದೆ; ನೀವು ಒಪ್ಪಿದರೆ ಮಾತ್ರ ವಾರದ ಸಾಧಕರ ಪಟ್ಟಿಯಲ್ಲಿ ಕಾಣುತ್ತದೆ.</p>
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="ಉದಾ: ಗುರುದತ್ತ" aria-label="ನಿಮ್ಮ ಹೆಸರು" />
         <Btn wide disabled={!name.trim()} onClick={() => onDone(name.trim())}>ಪ್ರವೇಶಿಸಿ 🙏</Btn>
       </>)}
@@ -257,7 +267,7 @@ function Home({ api, setTab }) {
   const ticks = s.challengeTicks[wk] || [false, false, false];
   const tick = (i) => api.update((st) => {
     const t = [...(st.challengeTicks[wk] || [false, false, false])]; t[i] = !t[i];
-    const n = { ...st, challengeTicks: { ...st.challengeTicks, [wk]: t } };
+    const n = { ...st, challengeTicks: { ...st.challengeTicks, [wk]: t }, challengeAt: { ...(st.challengeAt || {}), [wk]: Date.now() } };
     if (t.every(Boolean)) setTimeout(() => api.flash("ಸವಾಲು ಪೂರ್ಣ ✅", { label: "ಹಂಚಿಕೊಳ್ಳಿ", run: () => api.share(shareChallenge(ch, n)) }), 50);
     return n;
   });
@@ -448,8 +458,10 @@ function Lesson({ api, mod }) {
   const [set] = useState(() => {
     const W = visWords(s).filter((w) => (mod ? w.mod === mod : true));
     const fresh = W.filter((w) => !s.learned.includes(w.id));
-    return (fresh.length ? fresh : W).slice(0, 5);
+    // all learned → five random words to revise, not always the same first five
+    return fresh.length ? fresh.slice(0, 5) : pick(W, 5);
   });
+  const [isNew] = useState(() => set.some((w) => !s.learned.includes(w.id)));
   const sents = visSents(s);
   const steps = useMemo(() => set.flatMap((w) => {
     const u = usageOf(w, sents);
@@ -468,8 +480,10 @@ function Lesson({ api, mod }) {
 
   if (!set.length) return <><Header title="ಪಾಠ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ಘಟಕದಲ್ಲಿ ಪದಗಳಿಲ್ಲ.</p></div></>;
   if (res) return (
-    <Done api={api} title="ಅದ್ಭುತಮ್ 🎉" line={`ಇಂದು ನೀವು ${set.length} ಹೊಸ ಸಂಸ್ಕೃತ ಪದಗಳನ್ನು ಕಲಿತಿರಿ. ಅಭ್ಯಾಸದಲ್ಲಿ ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`}
-      shareText={shareLesson(set, s)} />
+    <Done api={api} title="ಅದ್ಭುತಮ್ 🎉" line={isNew
+      ? `ಇಂದು ನೀವು ${set.length} ಹೊಸ ಸಂಸ್ಕೃತ ಪದಗಳನ್ನು ಕಲಿತಿರಿ. ಅಭ್ಯಾಸದಲ್ಲಿ ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`
+      : `${set.length} ಪದಗಳನ್ನು ಮತ್ತೆ ಅಭ್ಯಾಸ ಮಾಡಿದಿರಿ. ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`}
+      shareText={isNew ? shareLesson(set, s) : null} />
   );
   if (phase === "quiz") return <Quiz qs={qs} p={s} title="ಅಭ್ಯಾಸ" onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => { setRes({ s: sc, t }); api.plan("w"); }} />;
 
@@ -853,6 +867,8 @@ function Practice({ api }) {
   W.forEach((w) => counts[wordState(s, w.id)]++);
   const due = dueItems(s);
   const labels = ["ಹೊಸದು", "ಕಲಿಯುತ್ತಿದೆ", "ಪುನರಾವರ್ತನೆ ಬೇಕು", "ಕರಗತ"];
+  // same rule SentenceQuiz uses, so the button never opens an empty quiz
+  const sentOk = visSents(s).filter((x) => s.sentences.includes(x.id) && alignable(x) && x.parts.length >= 2).length >= 1;
   return (
     <>
       <Header title="ಅಭ್ಯಾಸ" sub="ಮರೆಯುವ ಮೊದಲು ಮತ್ತೊಮ್ಮೆ" />
@@ -860,11 +876,18 @@ function Practice({ api }) {
         <div className="card stats">{labels.map((l, i) => <div key={i} className="stat"><b>{counts[i]}</b><span>{l}</span></div>)}</div>
         <Btn wide disabled={!due.length} onClick={() => api.go({ kind: "review" })}>ಇಂದಿನ ಪುನರಾವರ್ತನೆ ({due.length})</Btn>
         {!due.length && <p className="muted center">ಇಂದು ಪುನರಾವರ್ತಿಸಲು ಏನೂ ಇಲ್ಲ. ಹೊಸ ಪಾಠ ಆರಂಭಿಸಿ 🌿</p>}
-        <Btn wide kind="line" disabled={s.sentences.length < 2} onClick={() => api.go({ kind: "squiz" })}>ವಾಕ್ಯ ಅಭ್ಯಾಸ</Btn>
-        <Btn wide kind="line" disabled={!s.learned.length} onClick={() => api.go({ kind: "flash" })}>ಫ್ಲ್ಯಾಶ್ ಕಾರ್ಡ್</Btn>
-        <Btn wide kind="line" disabled={!s.mistakes.length} onClick={() => api.go({ kind: "review", mistakes: true })}>ತಪ್ಪುಗಳ ಪುಸ್ತಕ ({s.mistakes.length})</Btn>
-        <Btn wide kind="line" disabled={s.subhashitas.length < 2} onClick={() => api.go({ kind: "uquiz" })}>ಸುಭಾಷಿತ ಅಭ್ಯಾಸ</Btn>
-        <Btn wide kind="line" disabled={!s.grammar.length} onClick={() => api.go({ kind: "gquiz" })}>ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ</Btn>
+        {[
+          [!sentOk, "squiz", "ವಾಕ್ಯ ಅಭ್ಯಾಸ", "ಹಂತ 2 ರಲ್ಲಿ ವಾಕ್ಯ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ"],
+          [!s.learned.length, "flash", "ಫ್ಲ್ಯಾಶ್ ಕಾರ್ಡ್", "ಮೊದಲ ಪದ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ"],
+          [!s.mistakes.length, "mistakes", `ತಪ್ಪುಗಳ ಪುಸ್ತಕ (${s.mistakes.length})`, "ತಪ್ಪಾದ ಉತ್ತರಗಳು ಇಲ್ಲಿ ಸೇರುತ್ತವೆ — ಸದ್ಯ ಯಾವುದೂ ಇಲ್ಲ"],
+          [s.subhashitas.length < 2, "uquiz", "ಸುಭಾಷಿತ ಅಭ್ಯಾಸ", "ಹಂತ 5 ರಲ್ಲಿ 2 ಸುಭಾಷಿತ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ"],
+          [!s.grammar.length, "gquiz", "ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ", "ಹಂತ 4 ರಲ್ಲಿ ಮೊದಲ ಪಾಠ ಮುಗಿಸಿದ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ"],
+        ].map(([off, kind, label, why]) => (
+          <div key={kind}>
+            <Btn wide kind="line" disabled={off} onClick={() => api.go(kind === "mistakes" ? { kind: "review", mistakes: true } : { kind })}>{label}</Btn>
+            {off && <p className="muted small center btn-why">{why}</p>}
+          </div>
+        ))}
         <div className="card">
           <div className="sec-t">ಶಬ್ದಕೋಶ</div>
           <p className="muted">ಕನ್ನಡ ಅಥವಾ ಸಂಸ್ಕೃತ — ಯಾವ ಪದವನ್ನಾದರೂ ಹುಡುಕಿ.</p>
@@ -1016,7 +1039,7 @@ function WeekBoard({ api, setTab }) {
     fetchBoard(getAuth()?.token, which === "cur" ? wk : wk - 1)
       .then((r) => live && setB(r), () => live && setOff(true));
     return () => { live = false; };
-  }, [which, signedIn, cloud.at, cloud.cfg?.enabled]);
+  }, [which, signedIn, cloud.cfg?.enabled]);
 
   if (!cloud.cfg?.enabled) return null;
   // my score from this phone's own log — shows at once, even offline
@@ -1089,10 +1112,11 @@ function Me({ api, setTab }) {
   const [code, setCode] = useState("");
   const [remT, setRemT] = useState("07:00");
   const copy = (t, msg) => (navigator.clipboard?.writeText(t) || Promise.reject()).then(() => flash(msg), () => flash("ನಕಲಿಸಲು ಆಗಲಿಲ್ಲ. ಕೈಯಾರೆ ಆರಿಸಿ ನಕಲಿಸಿ."));
-  const reportText = s.reports.length
-    ? `ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್ — ತಪ್ಪಿನ ವರದಿ (${s.name})\n\n` + s.reports.map((r, i) => `${i + 1}. ${r.label}${r.note ? ` — ${r.note}` : ""} (${r.on})`).join("\n")
+  const reps = activeReports(s);
+  const reportText = reps.length
+    ? `ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್ — ತಪ್ಪಿನ ವರದಿ (${s.name})\n\n` + reps.map((r, i) => `${i + 1}. ${r.label}${r.note ? ` — ${r.note}` : ""} (${r.on})`).join("\n")
     : "";
-  const restore = (i) => update((st) => ({ ...st, reports: st.reports.filter((_, j) => j !== i) }));
+  const restore = (r) => update((st) => ({ ...st, reports: st.reports.map((x) => (x.kind === r.kind && x.id === r.id ? { ...x, off: Date.now() } : x)) }));
   const doImport = () => { try { const d = importCode(code); setCode(""); api.openImport(d); } catch { flash("ಈ ಕೋಡ್ ಸರಿಯಿಲ್ಲ."); } };
   return (
     <>
@@ -1139,7 +1163,7 @@ function Me({ api, setTab }) {
             <button type="button" key={i} className={s.fontStep === i ? "on" : ""} aria-pressed={s.fontStep === i} onClick={() => update({ fontStep: i })}>{l}</button>))}</div>
           <div className="muted small" style={{ marginTop: 12 }}>ನಿಮ್ಮ ಹೆಸರು</div>
           <div className="row"><input className="input" value={name} onChange={(e) => setName(e.target.value)} aria-label="ನಿಮ್ಮ ಹೆಸರು" />
-            <Btn small disabled={!name.trim() || name.trim() === s.name} onClick={() => { update({ name: name.trim() }); flash("ಹೆಸರು ಉಳಿಸಲಾಗಿದೆ"); }}>ಉಳಿಸಿ</Btn></div>
+            <Btn small disabled={!name.trim() || name.trim() === s.name} onClick={() => { update({ name: name.trim() }); if (api.cloud.auth) api.cloudApi.profile({ name: name.trim() }); flash("ಹೆಸರು ಉಳಿಸಲಾಗಿದೆ"); }}>ಉಳಿಸಿ</Btn></div>
         </div>
 
         <div className="sec-t">ದಿನನಿತ್ಯದ ನೆನಪು</div>
@@ -1154,11 +1178,11 @@ function Me({ api, setTab }) {
 
         <div className="sec-t">ವರದಿಯಾದ ತಪ್ಪುಗಳು</div>
         <div className="card">
-          {!s.reports.length ? <p className="muted">ಯಾವುದೇ ವರದಿ ಇಲ್ಲ.</p> : (<>
-            <p className="small">{s.reports.length} ವರದಿ. ವರದಿಯಾದ ವಸ್ತು ನಿಮ್ಮ ಪಾಠಗಳಿಂದ ಮರೆಯಾಗಿದೆ. ಈ ಪಟ್ಟಿಯನ್ನು ಕಲ್ಪತರು ತಂಡಕ್ಕೆ ಕಳಿಸಿ.</p>
-            {s.reports.map((r, i) => (
+          {!reps.length ? <p className="muted">ಯಾವುದೇ ವರದಿ ಇಲ್ಲ.</p> : (<>
+            <p className="small">{reps.length} ವರದಿ. ವರದಿಯಾದ ವಸ್ತು ನಿಮ್ಮ ಪಾಠಗಳಿಂದ ಮರೆಯಾಗಿದೆ. ಈ ಪಟ್ಟಿಯನ್ನು ಕಲ್ಪತರು ತಂಡಕ್ಕೆ ಕಳಿಸಿ.</p>
+            {reps.map((r, i) => (
               <div key={i} className="rep"><span>{r.label}{r.note ? <em> — {r.note}</em> : null}</span>
-                <button type="button" className="link" onClick={() => restore(i)}>ಮರಳಿ ತೋರಿಸು</button></div>
+                <button type="button" className="link" onClick={() => restore(r)}>ಮರಳಿ ತೋರಿಸು</button></div>
             ))}
             <div className="row two">
               <Btn small kind="line" onClick={() => copy(reportText, "ವರದಿ ಪಟ್ಟಿ ನಕಲಾಗಿದೆ")}>ಪಟ್ಟಿ ನಕಲಿಸಿ</Btn>
@@ -1249,7 +1273,8 @@ function CloudCard({ api }) {
             <Btn small disabled={busy || !consent || phone.replace(/\D/g, "").length < 10} onClick={savePhone}>ಉಳಿಸಿ</Btn>
           </div>
         </>) : u ? (<>
-          <p className="small">📱 {u.phone} <button type="button" className="link" onClick={() => setEditPhone(true)}>ಬದಲಿಸಿ</button></p>
+          <p className="small">📱 {u.phone} <button type="button" className="link" onClick={() => setEditPhone(true)}>ಬದಲಿಸಿ</button>
+            <button type="button" className="link" onClick={async () => { if (await cloudApi.profile({ phone: "" })) flash("ಸಂಖ್ಯೆ ತೆಗೆಯಲಾಗಿದೆ"); }}>ತೆಗೆಯಿರಿ</button></p>
           <label className="switch"><input type="checkbox" checked={board} onChange={toggleBoard} /> ಮಂಡಲದ ವಾರದ ಸಾಧಕರ ಪಟ್ಟಿಯಲ್ಲಿ ನನ್ನ ಹೆಸರು ತೋರಿಸಬಹುದು.</label>
         </>) : null}
         <div className="row two" style={{ marginTop: 8 }}>
@@ -1291,7 +1316,7 @@ function ShareSheet({ text, close, onShared, flash }) {
 function ReportSheet({ r, close, api }) {
   const [note, setNote] = useState("");
   const send = () => {
-    api.update((st) => ({ ...st, reports: [...st.reports, { ...r, note: note.trim() || undefined, on: new Date().toISOString().slice(0, 10) }] }));
+    api.update((st) => ({ ...st, reports: [...st.reports.filter((x) => !(x.kind === r.kind && x.id === r.id)), { ...r, note: note.trim() || undefined, on: new Date().toISOString().slice(0, 10), at: Date.now() }] }));
     close();
     if ("durg".includes(r.kind)) api.close(); // full-screen item just got hidden — leave it
     api.flash("ತಿಳಿಸಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದ. ಪರಿಶೀಲಿಸುತ್ತೇವೆ 🙏");

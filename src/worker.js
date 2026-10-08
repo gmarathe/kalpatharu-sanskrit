@@ -102,6 +102,7 @@ async function currentUser(req, db) {
 }
 
 const publicUser = (u) => ({
+  id: u.id,
   name: u.name || u.gname || "", email: u.email || "", picture: u.picture || "",
   phone: u.phone || "", board: !!u.board, consent: !!u.consent_at,
 });
@@ -157,19 +158,32 @@ async function weekScores(db, wk) {
 const pickWeek = (url, today) => {
   const w = Number(url.searchParams.get("week"));
   const cur = weekOf(today);
-  return Number.isFinite(w) && w > 0 && w <= cur ? w : cur;
+  // +1: a phone east of India can already be in next week on Monday morning
+  return Number.isFinite(w) && w > 0 && w <= cur + 1 ? w : cur;
 };
 
-// ಮಂಡಲದ ವಾರದ ಸಾಧಕರು — names only of members who agreed (board = 1); never phone or email
-async function board(db, url, me) {
-  const today = dayNumIST();
-  const wk = pickWeek(url, today);
+// ಮಂಡಲದ ವಾರದ ಸಾಧಕರು — names only of members who agreed (board = 1); never phone or email.
+// The ranking is cached for a minute per Worker instance so a busy circle doesn't re-read every table each time.
+const boardCache = new Map();
+async function ranking(db, wk) {
+  const hit = boardCache.get(wk);
+  if (hit && now() - hit.at < 60e3) return hit;
   const { days, scores } = await weekScores(db, wk);
   const users = (await db.prepare("SELECT id, name, gname, board FROM users").all()).results;
   const ranked = users
     .map((u) => ({ id: u.id, name: (u.name || u.gname || "").trim(), board: !!u.board, ...(scores.get(u.id) || { pts: 0, days: 0 }) }))
     .filter((r) => r.pts > 0)
     .sort((a, b) => b.pts - a.pts || b.days - a.days || a.name.localeCompare(b.name));
+  const out = { at: now(), days, scores, ranked };
+  boardCache.set(wk, out);
+  if (boardCache.size > 8) boardCache.delete(boardCache.keys().next().value);
+  return out;
+}
+
+async function board(db, url, me) {
+  const today = dayNumIST();
+  const wk = pickWeek(url, today);
+  const { days, scores, ranked } = await ranking(db, wk);
   const shown = ranked.filter((r) => r.board && r.name);
   const out = {
     week: wk, days, isCurrent: wk === weekOf(today), learners: ranked.length,
@@ -243,7 +257,8 @@ async function route(req, env) {
   await ensureSchema(db);
 
   if (path === "/api/auth/google" && req.method === "POST") {
-    const { credential } = await body(req);
+    let credential;
+    try { ({ credential } = await body(req)); } catch { return fail(400, "bad_request"); }
     let c;
     try { c = await verifyGoogle(credential, clientId); }
     catch (e) { return fail(401, /^[a-z_]+$/.test(e.message) ? "google_" + e.message : "google_bad_token"); }
@@ -253,6 +268,8 @@ async function route(req, env) {
        ON CONFLICT(id) DO UPDATE SET email = excluded.email, gname = excluded.gname, picture = excluded.picture, last_seen = excluded.last_seen`,
     ).bind(c.sub, c.email_verified ? c.email || "" : "", c.name || "", c.picture || "", t, t).run();
     const token = await newSession(db, c.sub);
+    // tidy up: expired sessions
+    await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(t).run();
     const u = await db.prepare("SELECT * FROM users WHERE id = ?").bind(c.sub).first();
     const st = await db.prepare("SELECT json FROM states WHERE user_id = ?").bind(c.sub).first();
     return json({ token, user: publicUser(u), state: st ? JSON.parse(st.json) : null });
@@ -277,7 +294,10 @@ async function route(req, env) {
   if (path === "/api/profile" && req.method === "POST") {
     const b = await body(req);
     const sets = [], vals = [];
-    if (b.phone !== undefined) {
+    if (b.phone === "") {
+      // member withdraws the number (and consent)
+      sets.push("phone = NULL", "consent_at = NULL");
+    } else if (b.phone !== undefined) {
       const ph = cleanPhone(b.phone);
       if (!ph) return fail(400, "bad_phone");
       if (!b.consent) return fail(400, "need_consent");
@@ -307,12 +327,15 @@ async function route(req, env) {
         .bind(t, (merged.name || "").slice(0, 60), u.id),
       progressRow(db, u.id, merged, t),
     ];
+    // only recent days count (a week back for offline phones, a day ahead for time zones) — old or future entries can't add points
+    const today = dayNumIST(t);
+    const lo = dayKeyOf(today - 7), hi = dayKeyOf(today + 1);
     for (const [day, v] of Object.entries(merged.log || {})) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < lo || day > hi) continue;
       stmts.push(db.prepare(
         `INSERT INTO activity (user_id, day, n, p) VALUES (?, ?, ?, ?)
          ON CONFLICT(user_id, day) DO UPDATE SET n = MAX(n, excluded.n), p = MAX(p, excluded.p)`,
-      ).bind(u.id, day, Math.max(0, Math.min(500, v.n | 0)), v.p ? 1 : 0));
+      ).bind(u.id, day, Math.max(0, Math.min(50, v.n | 0)), v.p ? 1 : 0));
     }
     await db.batch(stmts);
     return json({ state: merged, at: t });
