@@ -17,7 +17,7 @@
   "vars": {
     // Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web).
     // ಇದು ರಹಸ್ಯವಲ್ಲ. ಖಾಲಿ ಇದ್ದರೆ ಆ್ಯಪ್‌ನಲ್ಲಿ ಲಾಗಿನ್ ಕಾರ್ಡ್ ಕಾಣಿಸುವುದಿಲ್ಲ.
-    "GOOGLE_CLIENT_ID": ""
+    "GOOGLE_CLIENT_ID": "948794395364-rh4a3bjhictvtdnip9misj37o7u48798.apps.googleusercontent.com"
   },
   // ಪರೀಕ್ಷಾ (preview) ಆವೃತ್ತಿಗಳು: ಪ್ರತ್ಯೇಕ ಡೇಟಾಬೇಸ್ — ನಿಜವಾದ ಸದಸ್ಯರ ಪ್ರಗತಿ ಮುಟ್ಟುವುದಿಲ್ಲ.
   "previews": {
