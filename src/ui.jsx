@@ -36,11 +36,12 @@ export function SrcLine({ item }) {
 }
 
 /* One Sanskrit item: Devanagari (optional) + Kannada script + meaning */
-export function ScriptCard({ item, p, split, tip, tag, onReport, onShare, compact, children, kn }) {
+export function ScriptCard({ item, p, split, tip, tag, onReport, onShare, compact, children, kn, pic }) {
   const f = FS[p.fontStep] || 1;
   return (
     <div className={`card script${compact ? " compact" : ""}`}>
       {(tag || kn) && <div className="tag-row">{tag && <div className="tag">{tag}</div>}{kn && <span className="knchip">ಕನ್ನಡದಲ್ಲೂ ಇದೆ ✓</span>}</div>}
+      {pic && <div className="wpic" aria-hidden="true">{pic}</div>}
       {p.showDeva && <div className="dev" style={{ fontSize: (compact ? 24 : 34) * f }}>{item.d}</div>}
       <div className="kan" style={{ fontSize: (compact ? 22 : 30) * f }}>{item.k}</div>
       {split && <div className="split">{split}</div>}

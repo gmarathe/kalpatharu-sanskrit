@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES, GRAMMAR, SUBHASHITAS, READINGS, KN_SHARED } from "./content.js";
+import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES, GRAMMAR, SUBHASHITAS, READINGS, KN_SHARED, WORD_PIC } from "./content.js";
 import {
   EMPTY, load, save, migrate, dayNum, weekNum, pad3, pick, shuffle,
   visWords, visSents, visDias, visGram, visSubh, visRead, gradeItem, wordState, isDue, touch, usageOf,
@@ -8,7 +8,7 @@ import {
   planToday, markPlan, seedSrs, reminderIcs, reminderWa, dayKey, activeReports,
   liveStreak, levelOf, MILESTONES, MAX_SHIELDS, shareStreak, shareSpeed,
 } from "./lib.js";
-import { Confetti, Ring, WeekStrip, Recorder, InstallCard, drawCard, shareImage, buzz, setHaptics, COACH } from "./delight.jsx";
+import { Confetti, Ring, WeekStrip, Recorder, Trace, InstallCard, drawCard, shareImage, buzz, setHaptics, COACH } from "./delight.jsx";
 import { mergeState, itemCount, weekScore, weekDayKeys, WEEK_MAX } from "./merge.js";
 import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi, fetchBoard } from "./sync.js";
 import {
@@ -356,7 +356,7 @@ function Home({ api, setTab }) {
           <span className="lvl-b"><b>60 ಸೆಕೆಂಡ್ ಸವಾಲು</b><span className="muted small">{s.learned.length < 4 ? "ನಾಲ್ಕು ಪದ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ" : s.speedBest ? `ನಿಮ್ಮ ಅತ್ಯುತ್ತಮ: ${s.speedBest} ಪದ` : "ಕಲಿತ ಪದಗಳ ವೇಗದ ಆಟ"}</span></span>
           <span className="lvl-p">→</span>
         </button>
-        {w && <ScriptCard item={w} p={s} split={w.split} tip={w.tip} tag="ಶಬ್ದಃ — ಇಂದಿನ ಪದ" kn={KN_SHARED.has(w.id)}
+        {w && <ScriptCard item={w} p={s} split={w.split} tip={w.tip} tag="ಶಬ್ದಃ — ಇಂದಿನ ಪದ" kn={KN_SHARED.has(w.id)} pic={WORD_PIC[w.id]}
           onShare={() => api.share(shareWord(w, s), wordCard(w))} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />}
         {x && <ScriptCard item={x} p={s} tag="ವಾಕ್ಯಮ್ — ಇಂದಿನ ವಾಕ್ಯ"
           onShare={() => api.share(shareSentence(x, s), sentCard(x))} onReport={() => api.report("s", x.id, `ವಾಕ್ಯ: ${x.d}`)} />}
@@ -493,7 +493,30 @@ function Level0({ api }) {
         <div className="sec-t">ಗಮನಿಸಬೇಕಾದದ್ದು</div>
         {NOTES.map((n) => <div key={n.t} className="card note"><b>{n.t}</b><p>{n.d}</p></div>)}
         <Btn wide onClick={() => setQuiz(pick(all, 10).map((pr) => letterQ(pr, all)))}>ಅಕ್ಷರ ಅಭ್ಯಾಸ (10 ಪ್ರಶ್ನೆ)</Btn>
+        <Btn wide kind="line" onClick={() => api.go({ kind: "trace" })}>✍️ ದೇವನಾಗರಿ ಬರೆದು ಕಲಿಯಿರಿ</Btn>
         <Btn wide kind="line" onClick={() => { api.update((st) => touch({ ...st, l0done: true })); api.close(); }}>ಮುಗಿಯಿತು</Btn>
+      </div>
+    </>
+  );
+}
+
+/* ── trace a Devanagari letter with a finger ── */
+function TraceView({ api }) {
+  const all = useMemo(() => [...VOWELS, ...CONSONANTS.flatMap((r) => r.items)], []);
+  const [i, setI] = useState(0);
+  const [n, setN] = useState(0);
+  const [dv, kn] = all[i];
+  return (
+    <>
+      <Header title="ದೇವನಾಗರಿ ಬರೆಯಿರಿ" sub={`${i + 1} / ${all.length} · ಕನ್ನಡ: ${kn}`} onBack={api.close} />
+      <div className="pad center">
+        <p className="muted">ಮಸುಕಾಗಿ ಕಾಣುವ ಅಕ್ಷರದ ಮೇಲೆ ಬೆರಳಿನಿಂದ ಬರೆಯಿರಿ.</p>
+        <Trace key={i} ch={dv} onGood={() => { setN(n + 1); if (n === 0) api.update((st) => touch({ ...st, xp: st.xp + 1 })); else api.update((st) => ({ ...st, xp: st.xp + 1 })); }} />
+        <div className="row two">
+          <Btn kind="line" disabled={i === 0} onClick={() => setI(i - 1)}>← ಹಿಂದಿನದು</Btn>
+          <Btn disabled={i + 1 >= all.length} onClick={() => setI(i + 1)}>ಮುಂದಿನದು →</Btn>
+        </div>
+        {n > 0 && <p className="muted small">ಈ ಬಾರಿ {n} ಅಕ್ಷರ ಚೆನ್ನಾಗಿ ಬರೆದಿರಿ 🌿</p>}
       </div>
     </>
   );
@@ -592,7 +615,7 @@ function Lesson({ api, mod }) {
       <div className="pad">
         <Bar now={i + 1} total={steps.length + 1} />
         {st.t === "learn" ? (<>
-          <ScriptCard item={w} p={s} split={w.split} tip={w.tip} kn={KN_SHARED.has(w.id)} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />
+          <ScriptCard item={w} p={s} split={w.split} tip={w.tip} kn={KN_SHARED.has(w.id)} pic={WORD_PIC[w.id]} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />
           <div className="card say"><b>ಹೇಳಿ</b><p>ಕನ್ನಡ ಲಿಪಿಯನ್ನು ನೋಡಿ, ಅಕ್ಷರ ಬಿಡಿಸಿ, ಗಟ್ಟಿಯಾಗಿ ಮೂರು ಬಾರಿ ಹೇಳಿ — <span className="kan-inl">{w.k}</span></p>
             <Recorder key={w.id} /></div>
         </>) : (<>
@@ -1180,6 +1203,7 @@ function Flash({ api }) {
       <div className="pad">
         <Bar now={i + 1} total={deck.length} />
         <button type="button" className="card flash" onClick={() => setFlip(!flip)} aria-label="ಅರ್ಥ ನೋಡಲು ಒತ್ತಿ">
+          {flip && WORD_PIC[w.id] && <span className="wpic" aria-hidden="true">{WORD_PIC[w.id]}</span>}
           {s.showDeva && <span className="dev" style={{ fontSize: 34 * f }}>{w.d}</span>}
           <span className="kan" style={{ fontSize: 30 * f }}>{w.k}</span>
           {flip ? <span className="mean big">{w.m}</span> : <span className="muted">ಅರ್ಥ ನೋಡಲು ಒತ್ತಿ</span>}
@@ -1665,5 +1689,5 @@ function Nav({ tab, setTab }) {
 const VIEWS = {
   l0: Level0, l1: Level1, lesson: Lesson, l2: Level2, squiz: SentenceQuiz, l3: Level3, dialogue: Dialogue,
   l4: Level4, grammar: GrammarLesson, gquiz: GrammarQuiz, l5: Level5, subhashita: Subhashita, uquiz: SubhashitaQuiz, l6: Level6, reading: Reading,
-  review: Review, flash: Flash, search: Search, speed: Speed, known: Known,
+  review: Review, flash: Flash, search: Search, speed: Speed, known: Known, trace: TraceView,
 };

@@ -242,3 +242,69 @@ export const COACH = [
   "ಗಟ್ಟಿಯಾಗಿ ಹೇಳಿದ ಪದ ಬೇಗ ನೆನಪಿನಲ್ಲಿ ಉಳಿಯುತ್ತದೆ.",
   "ಸ್ವಲ್ಪ ಸ್ವಲ್ಪವಾಗಿ ಕಲಿತದ್ದು ಹೆಚ್ಚು ಕಾಲ ಉಳಿಯುತ್ತದೆ.",
 ];
+
+/* ── trace a letter: the glyph is drawn faintly from the app's own font; the finger's path is compared with it.
+   No stroke-order data — only "did you cover the letter without wandering far". ── */
+export function Trace({ ch, onGood }) {
+  const cv = useRef(null), mask = useRef(null), ink = useRef(null), last = useRef(null);
+  const [res, setRes] = useState(null); // null | "good" | "more" | "out"
+  const S = 300;
+  const paint = () => {
+    const x = cv.current.getContext("2d");
+    x.clearRect(0, 0, S, S);
+    x.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--line") || "#D8CBAE";
+    x.font = '700 200px "KSM Deva", serif'; x.textAlign = "center"; x.textBaseline = "middle";
+    x.fillText(ch, S / 2, S / 2 + 10);
+    x.drawImage(ink.current, 0, 0);
+  };
+  useEffect(() => {
+    let live = true;
+    const mk = () => { const c = document.createElement("canvas"); c.width = c.height = S; return c; };
+    mask.current = mk(); ink.current = mk();
+    (document.fonts?.load ? document.fonts.load('700 200px "KSM Deva"', ch) : Promise.resolve()).then(() => {
+      if (!live) return;
+      const m = mask.current.getContext("2d");
+      m.font = '700 200px "KSM Deva", serif'; m.textAlign = "center"; m.textBaseline = "middle";
+      m.fillStyle = "#000"; m.fillText(ch, S / 2, S / 2 + 10);
+      paint();
+    });
+    return () => { live = false; };
+  }, [ch]);
+  const pos = (e) => { const r = cv.current.getBoundingClientRect(); return [((e.clientX - r.left) * S) / r.width, ((e.clientY - r.top) * S) / r.height]; };
+  const down = (e) => { e.preventDefault(); cv.current.setPointerCapture?.(e.pointerId); last.current = pos(e); setRes(null); };
+  const move = (e) => {
+    if (!last.current) return;
+    const p = pos(e), x = ink.current.getContext("2d");
+    x.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--maroon") || "#7A1F2B";
+    x.lineWidth = 16; x.lineCap = "round"; x.lineJoin = "round";
+    x.beginPath(); x.moveTo(...last.current); x.lineTo(...p); x.stroke();
+    last.current = p; paint();
+  };
+  const up = () => { last.current = null; };
+  const clear = () => { ink.current.getContext("2d").clearRect(0, 0, S, S); setRes(null); paint(); };
+  const check = () => {
+    const g = mask.current.getContext("2d").getImageData(0, 0, S, S).data, k = ink.current.getContext("2d").getImageData(0, 0, S, S).data;
+    // glyph pixels covered by ink (within ~10px), and ink far from the glyph
+    const near = (d, x, y, r) => { for (let dy = -r; dy <= r; dy += 5) for (let dx = -r; dx <= r; dx += 5) { const X = x + dx, Y = y + dy; if (X >= 0 && Y >= 0 && X < S && Y < S && d[(Y * S + X) * 4 + 3] > 60) return true; } return false; };
+    let gl = 0, cov = 0, inkN = 0, out = 0;
+    for (let y = 0; y < S; y += 3) for (let x = 0; x < S; x += 3) {
+      const i = (y * S + x) * 4 + 3;
+      if (g[i] > 60) { gl++; if (near(k, x, y, 10)) cov++; }
+      if (k[i] > 60) { inkN++; if (!near(g, x, y, 15)) out++; }
+    }
+    const c = gl ? cov / gl : 0, o = inkN ? out / inkN : 1;
+    const r = c >= 0.7 && o <= 0.3 ? "good" : o > 0.3 ? "out" : "more";
+    setRes(r); buzz(r === "good" ? "ok" : "bad");
+    if (r === "good") onGood?.();
+  };
+  return (
+    <div className="trace">
+      <canvas ref={cv} width={S} height={S} className={`trace-cv${res === "good" ? " good" : ""}`}
+        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-label={`ಬರೆಯುವ ಜಾಗ: ${ch}`} />
+      <div className={`verdict${res === "good" ? " good" : ""}`}>
+        {res === "good" ? "ಚೆನ್ನಾಗಿದೆ 🌿" : res === "more" ? "ಅಕ್ಷರದ ಎಲ್ಲಾ ಭಾಗಗಳ ಮೇಲೂ ಬರೆಯಿರಿ." : res === "out" ? "ಗೆರೆ ಅಕ್ಷರದಿಂದ ಸ್ವಲ್ಪ ಹೊರಗೆ ಹೋಗಿದೆ. ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ." : " "}
+      </div>
+      <div className="row two"><button type="button" className="btn btn-line" onClick={clear}>ಅಳಿಸಿ</button><button type="button" className="btn btn-solid" onClick={check}>ಪರೀಕ್ಷಿಸಿ</button></div>
+    </div>
+  );
+}
