@@ -72,6 +72,11 @@ export function mergeState(a, b) {
     srs,
     xp: Math.max(a.xp || 0, b.xp || 0),
     streak: later.streak || 0, lastDay: later.lastDay || null,
+    // shields travel with the streak they protect
+    shields: later.shields ?? a.shields ?? b.shields ?? 1,
+    shieldDays: union(a.shieldDays, b.shieldDays).sort().slice(-30),
+    bestStreak: Math.max(a.bestStreak || 0, b.bestStreak || 0, later.streak || 0),
+    speedBest: Math.max(a.speedBest || 0, b.speedBest || 0),
     challengeTicks: ticks,
     challengeAt: ticksAt,
     shares: Math.max(a.shares || 0, b.shares || 0),

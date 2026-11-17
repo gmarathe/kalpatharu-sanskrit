@@ -118,6 +118,9 @@ function cleanPhone(p) {
 }
 
 /* ── per-learner summary (for the dashboard) ─────────── */
+const progressKey = (st) => JSON.stringify([
+  ...["learned", "sentences", "dialogues", "grammar", "subhashitas", "readings"].map((k) => (Array.isArray(st[k]) ? st[k].length : 0)),
+  st.xp | 0, st.streak | 0, st.lastDay || null, st.challengeTicks || {}]);
 function progressRow(db, userId, st, t) {
   const n = (k) => (Array.isArray(st[k]) ? st[k].length : 0);
   const ticks = Object.fromEntries(Object.entries(st.challengeTicks || {}).sort((a, b) => b[0] - a[0]).slice(0, 4));
@@ -145,6 +148,9 @@ async function weekScores(db, wk) {
   const byUser = {};
   for (const a of acts) (byUser[a.user_id] ||= []).push(a);
   const out = new Map();
+  // the whole circle together this week: new items and learning days (cooperative goal, no ranks)
+  const circle = { items: 0, days: acts.length, learners: Object.keys(byUser).length };
+  for (const a of acts) circle.items += Math.max(0, Math.min(50, a.n | 0));
   for (const r of prog) {
     let ticks = null;
     try { ticks = JSON.parse(r.ticks || "{}")[wk] || null; } catch {}
@@ -152,7 +158,7 @@ async function weekScores(db, wk) {
     delete byUser[r.user_id];
   }
   for (const [uid, list] of Object.entries(byUser)) out.set(uid, { ...weekScore(list, null), ticks: 0 });
-  return { days, scores: out };
+  return { days, scores: out, circle };
 }
 
 const pickWeek = (url, today) => {
@@ -168,13 +174,13 @@ const boardCache = new Map();
 async function ranking(db, wk) {
   const hit = boardCache.get(wk);
   if (hit && now() - hit.at < 60e3) return hit;
-  const { days, scores } = await weekScores(db, wk);
+  const { days, scores, circle } = await weekScores(db, wk);
   const users = (await db.prepare("SELECT id, name, gname, board FROM users").all()).results;
   const ranked = users
     .map((u) => ({ id: u.id, name: (u.name || u.gname || "").trim(), board: !!u.board, ...(scores.get(u.id) || { pts: 0, days: 0 }) }))
     .filter((r) => r.pts > 0)
     .sort((a, b) => b.pts - a.pts || b.days - a.days || a.name.localeCompare(b.name));
-  const out = { at: now(), days, scores, ranked };
+  const out = { at: now(), days, scores, ranked, circle };
   boardCache.set(wk, out);
   if (boardCache.size > 8) boardCache.delete(boardCache.keys().next().value);
   return out;
@@ -183,10 +189,10 @@ async function ranking(db, wk) {
 async function board(db, url, me) {
   const today = dayNumIST();
   const wk = pickWeek(url, today);
-  const { days, scores, ranked } = await ranking(db, wk);
+  const { days, scores, ranked, circle } = await ranking(db, wk);
   const shown = ranked.filter((r) => r.board && r.name);
   const out = {
-    week: wk, days, isCurrent: wk === weekOf(today), learners: ranked.length,
+    week: wk, days, isCurrent: wk === weekOf(today), learners: ranked.length, circle,
     top: shown.slice(0, 10).map((r) => ({ name: r.name, pts: r.pts, days: r.days, me: !!me && r.id === me.id })),
     perfect: shown.filter((r) => r.days === 7).map((r) => r.name),
   };
@@ -208,7 +214,7 @@ async function adminSummary(db, url) {
 
   const today = dayNumIST(t);
   const wk = pickWeek(url, today);
-  const { days, scores } = await weekScores(db, wk);
+  const { days, scores, circle } = await weekScores(db, wk);
   const users = (await db.prepare(
     `SELECT u.id, u.email, u.name, u.gname, u.phone, u.board, u.created_at, u.last_seen,
             p.words, p.sentences, p.dialogues, p.grammar, p.subhashitas, p.readings, p.xp, p.streak, p.last_day
@@ -319,25 +325,33 @@ async function route(req, env) {
     const merged = mergeState(incoming, stored);
     merged.log = mergeLog(incoming.log, stored?.log);
     const t = now();
-    const stmts = [
-      db.prepare(`INSERT INTO states (user_id, json, updated_at) VALUES (?, ?, ?)
+    // D1 free plan allows 100k row writes a day — write only what really changed
+    const mergedJson = JSON.stringify(merged);
+    const stateChanged = !row || row.json !== mergedJson;
+    const stmts = [];
+    if (stateChanged) {
+      stmts.push(db.prepare(`INSERT INTO states (user_id, json, updated_at) VALUES (?, ?, ?)
                   ON CONFLICT(user_id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`)
-        .bind(u.id, JSON.stringify(merged), t),
+        .bind(u.id, mergedJson, t));
+      if (!stored || progressKey(stored) !== progressKey(merged)) stmts.push(progressRow(db, u.id, merged, t));
+    }
+    // last_seen: at most once an hour unless something changed
+    if (stateChanged || !u.last_seen || t - u.last_seen > 3600e3 || !u.name) stmts.push(
       db.prepare("UPDATE users SET last_seen = ?, name = COALESCE(NULLIF(name, ''), ?) WHERE id = ?")
-        .bind(t, (merged.name || "").slice(0, 60), u.id),
-      progressRow(db, u.id, merged, t),
-    ];
+        .bind(t, (merged.name || "").slice(0, 60), u.id));
     // only recent days count (a week back for offline phones, a day ahead for time zones) — old or future entries can't add points
     const today = dayNumIST(t);
     const lo = dayKeyOf(today - 7), hi = dayKeyOf(today + 1);
     for (const [day, v] of Object.entries(merged.log || {})) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < lo || day > hi) continue;
+      const was = stored?.log?.[day];
+      if (was && (was.n | 0) >= (v.n | 0) && (was.p ? 1 : 0) >= (v.p ? 1 : 0)) continue; // already on the server
       stmts.push(db.prepare(
         `INSERT INTO activity (user_id, day, n, p) VALUES (?, ?, ?, ?)
          ON CONFLICT(user_id, day) DO UPDATE SET n = MAX(n, excluded.n), p = MAX(p, excluded.p)`,
       ).bind(u.id, day, Math.max(0, Math.min(50, v.n | 0)), v.p ? 1 : 0));
     }
-    await db.batch(stmts);
+    if (stmts.length) await db.batch(stmts);
     return json({ state: merged, at: t });
   }
 
