@@ -24,6 +24,11 @@ const SCHEMA_SQL = [
      user_id TEXT PRIMARY KEY, words INTEGER, sentences INTEGER, dialogues INTEGER, grammar INTEGER,
      subhashitas INTEGER, readings INTEGER, xp INTEGER, streak INTEGER, last_day TEXT,
      ticks TEXT, updated_at INTEGER NOT NULL)`,
+  // v3.1 — daily reminder (Web Push): one row per phone that asked for it; no account needed
+  `CREATE TABLE IF NOT EXISTS push_subs (
+     endpoint TEXT PRIMARY KEY, slot INTEGER NOT NULL, done_day TEXT, sent_day TEXT, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS push_slot ON push_subs (slot)`,
+  `CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS activity_day ON activity (day)`,
   `CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id)`,
 ];
@@ -248,6 +253,88 @@ async function adminSummary(db, url) {
   return { week: wk, days, today: todayKey, isCurrent: wk === weekOf(today), totals, members };
 }
 
+/* ── daily reminder (Web Push, no payload) ─────────────
+   The Worker makes its own VAPID key pair once and keeps it in D1 (table kv) — nothing to configure.
+   A push carries no text; the service worker shows a fixed, gentle Kannada line. At most one a day,
+   only at the time the learner chose, and not at all if they have already learned that day. */
+const PUSH_HOSTS = /(^|\.)(fcm\.googleapis\.com|push\.apple\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
+const PUSH_CONTACT = "mailto:connect@kalpatharu.org";
+let vapidP = null;
+function vapid(db) {
+  if (!vapidP) vapidP = (async () => {
+    const row = await db.prepare("SELECT v FROM kv WHERE k = 'vapid'").first();
+    let saved = row ? JSON.parse(row.v) : null;
+    if (!saved) {
+      const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+      saved = { jwk: await crypto.subtle.exportKey("jwk", kp.privateKey), pub: b64u(await crypto.subtle.exportKey("raw", kp.publicKey)) };
+      await db.prepare("INSERT OR IGNORE INTO kv (k, v) VALUES ('vapid', ?)").bind(JSON.stringify(saved)).run();
+      const again = await db.prepare("SELECT v FROM kv WHERE k = 'vapid'").first(); // another isolate may have won the race
+      saved = JSON.parse(again.v);
+    }
+    const key = await crypto.subtle.importKey("jwk", saved.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+    return { key, pub: saved.pub };
+  })().catch((e) => { vapidP = null; throw e; });
+  return vapidP;
+}
+const enc = (o) => b64u(new TextEncoder().encode(JSON.stringify(o)));
+async function vapidAuth(db, endpoint) {
+  const { key, pub } = await vapid(db);
+  const head = enc({ typ: "JWT", alg: "ES256" }) + "." + enc({ aud: new URL(endpoint).origin, exp: Math.floor(now() / 1000) + 12 * 3600, sub: PUSH_CONTACT });
+  const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, new TextEncoder().encode(head));
+  return `vapid t=${head}.${b64u(sig)}, k=${pub}`;
+}
+const okEndpoint = (e) => { try { const u = new URL(e); return u.protocol === "https:" && PUSH_HOSTS.test(u.hostname) && e.length < 1000; } catch { return false; } };
+// "HH:MM" India time → quarter-hour slot 0..95
+const slotOf = (hhmm) => { const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || ""); if (!m) return null; const h = +m[1], mi = +m[2]; return h < 24 && mi < 60 ? h * 4 + Math.floor(mi / 15) : null; };
+
+async function pushRoutes(req, path, db) {
+  if (path === "/api/push/subscribe" && req.method === "POST") {
+    let b; try { b = await body(req); } catch { return fail(400, "bad_request"); }
+    const slot = slotOf(b.time);
+    if (!okEndpoint(b.endpoint) || slot == null) return fail(400, "bad_request");
+    await db.prepare(`INSERT INTO push_subs (endpoint, slot, created_at) VALUES (?, ?, ?)
+                      ON CONFLICT(endpoint) DO UPDATE SET slot = excluded.slot`).bind(b.endpoint, slot, now()).run();
+    return json({ ok: true });
+  }
+  if (path === "/api/push/unsubscribe" && req.method === "POST") {
+    let b; try { b = await body(req); } catch { return fail(400, "bad_request"); }
+    if (typeof b.endpoint === "string") await db.prepare("DELETE FROM push_subs WHERE endpoint = ?").bind(b.endpoint).run();
+    return json({ ok: true });
+  }
+  // the phone says "learned today" → no reminder today
+  if (path === "/api/push/done" && req.method === "POST") {
+    let b; try { b = await body(req); } catch { return fail(400, "bad_request"); }
+    if (typeof b.endpoint === "string") await db.prepare("UPDATE push_subs SET done_day = ? WHERE endpoint = ? AND (done_day IS NULL OR done_day <> ?)")
+      .bind(dayKeyOf(dayNumIST()), b.endpoint, dayKeyOf(dayNumIST())).run();
+    return json({ ok: true });
+  }
+  return null;
+}
+
+// every 15 minutes: this slot's phones that have not learned today (free plan: 50 outgoing calls a run → 45 at a time;
+// anyone left over is picked up by the next runs of the same hour)
+async function sendReminders(env) {
+  const db = env.DB;
+  if (!db) return;
+  await ensureSchema(db);
+  const t = now(), today = dayKeyOf(dayNumIST(t));
+  const mins = Math.floor(((t + IST) % 864e5) / 60000), slot = Math.floor(mins / 15);
+  const lo = Math.max(0, slot - 3);
+  const subs = (await db.prepare(
+    `SELECT endpoint FROM push_subs WHERE slot BETWEEN ? AND ? AND (done_day IS NULL OR done_day <> ?) AND (sent_day IS NULL OR sent_day <> ?) LIMIT 45`,
+  ).bind(lo, slot, today, today).all()).results;
+  if (!subs.length) return;
+  const stmts = [];
+  await Promise.all(subs.map(async ({ endpoint }) => {
+    try {
+      const r = await fetch(endpoint, { method: "POST", headers: { authorization: await vapidAuth(db, endpoint), ttl: "7200", urgency: "normal", "content-length": "0" } });
+      if (r.status === 404 || r.status === 410) stmts.push(db.prepare("DELETE FROM push_subs WHERE endpoint = ?").bind(endpoint));
+      else stmts.push(db.prepare("UPDATE push_subs SET sent_day = ? WHERE endpoint = ?").bind(today, endpoint));
+    } catch (e) { console.error("push", e); }
+  }));
+  if (stmts.length) await db.batch(stmts);
+}
+
 /* ── routes ──────────────────────────────────────────── */
 async function route(req, env) {
   const url = new URL(req.url);
@@ -255,12 +342,15 @@ async function route(req, env) {
   const clientId = env.GOOGLE_CLIENT_ID || "";
 
   if (path === "/api/config" && req.method === "GET") {
-    return json({ googleClientId: clientId, enabled: !!(clientId && env.DB) });
+    let pushKey = null;
+    if (env.DB) { try { await ensureSchema(env.DB); pushKey = (await vapid(env.DB)).pub; } catch (e) { console.error(e); } }
+    return json({ googleClientId: clientId, enabled: !!(clientId && env.DB), pushKey });
   }
   if (!env.DB) return fail(503, "no_db");
-  if (!clientId) return fail(503, "no_client_id");
   const db = env.DB;
   await ensureSchema(db);
+  if (path.startsWith("/api/push/")) { const r = await pushRoutes(req, path, db); if (r) return r; }
+  if (!clientId) return fail(503, "no_client_id");
 
   if (path === "/api/auth/google" && req.method === "POST") {
     let credential;
@@ -365,4 +455,5 @@ export default {
     try { return await route(req, env); }
     catch (e) { console.error(e); return fail(500, "server_error"); }
   },
+  async scheduled(event, env, ctx) { ctx.waitUntil(sendReminders(env)); },
 };

@@ -39,6 +39,10 @@ export const EMPTY = {
   speedBest: 0,       // 60 ಸೆಕೆಂಡ್ ಸವಾಲಿನ ಅತ್ಯುತ್ತಮ ಅಂಕ
   haptics: true,      // ಉತ್ತರಕ್ಕೆ ಸಣ್ಣ ಕಂಪನ (Android)
   theme: "auto",      // "auto" | "light" | "dark"
+  // v3.1
+  shibira: [],        // ಸಂಭಾಷಣ ಶಿಬಿರದ ಮುಗಿದ ದಿನಗಳು
+  fest: [],           // ಮುಗಿದ ಹಬ್ಬದ ಪಾಠಗಳು
+  voice: true,        // 🔊 ಫೋನಿನ ಕನ್ನಡ ಧ್ವನಿಯಲ್ಲಿ ಓದಿ ಕೇಳಿಸು
 };
 
 /* ── daily plan ─────────────────────────────────────────── */
@@ -183,6 +187,8 @@ export const shareWord = (w, s) => `${HEAD}\nಇಂದು ನಾನು ಕಲಿ
 export const shareSentence = (x, s) => `${HEAD}\nಇಂದಿನ ವಾಕ್ಯ:\n\n${x.d}\n${x.k}\n${x.m}\n\n${sig(s, "ವಾಕ್ಯ #" + pad3(x.id))}\n${FOOT}`;
 export const shareLesson = (ws, s) => `${HEAD}\nಇಂದು ನಾನು ${ws.length === 1 ? "ಒಂದು ಹೊಸ ಪದವನ್ನು" : `${ws.length} ಹೊಸ ಪದಗಳನ್ನು`} ಕಲಿತೆ:\n\n${ws.map((w) => `${w.d} — ${w.k} — ${w.m}`).join("\n")}\n\n— ${s.name}${fire(s)}\n${FOOT}`;
 export const shareBadge = (b, s) => `${HEAD}\nಹೊಸ ಸಾಧನೆ: ${b.t} 🏅\n(${b.d})\n\n— ${s.name}${fire(s)}\n${FOOT}`;
+export const shareIntro = (lines, s) => `${HEAD}\nಸಂಭಾಷಣ ಶಿಬಿರ ಪೂರ್ಣ — ನನ್ನ ಪರಿಚಯ ಸಂಸ್ಕೃತದಲ್ಲಿ:\n\n${lines.map((l) => `${l[0]}\n${l[1]}`).join("\n")}\n\n— ${s.name}\n${FOOT}`;
+export const shareFest = (f, s) => `${HEAD}\n${f.greet[0]}\n${f.greet[1]}\n${f.greet[2]} ${f.ic}\n\n${f.verse.map((l) => l[0]).join("\n")}\n\n${f.verse.map((l) => l[1]).join("\n")}\n\n${f.m}\n\n— ${s.name}\n${FOOT}`;
 export const shareStreak = (n, s) => `${HEAD}\nಸತತ ${n} ದಿನಗಳ ಸಂಸ್ಕೃತ ಅಭ್ಯಾಸ 🔥\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ — ನಿಧಾನವಾಗಿ, ನಿಯಮಿತವಾಗಿ.\n\n— ${s.name}\n${APP_URL}\n${FOOT}`;
 export const shareSpeed = (n, s) => `${HEAD}\n60 ಸೆಕೆಂಡ್ ಸವಾಲಿನಲ್ಲಿ ${n} ಸಂಸ್ಕೃತ ಪದಗಳು ⚡\nನೀವೂ ಪ್ರಯತ್ನಿಸಿ: ${APP_URL}\n\n— ${s.name}\n${FOOT}`;
 export const shareChallenge = (c, s) => `${HEAD}\nಈ ವಾರದ ಸವಾಲು ಪೂರ್ಣಗೊಳಿಸಿದೆ ✅\n\n${c}\n\n— ${s.name}${fire(s)}\n${FOOT}`;
@@ -191,7 +197,7 @@ export const shareSubhashita = (v, s) => `${HEAD}\nಇಂದಿನ ಸುಭಾ�
 export const inviteText = (s) => `${HEAD}\nನಾನು ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲದಲ್ಲಿ ಸಂಸ್ಕೃತ ಕಲಿಯಲು ಶುರು ಮಾಡಿದ್ದೇನೆ.\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ ಸಾಕು. ನೀವೂ ಜೊತೆಗೆ ಕಲಿಯುತ್ತೀರಾ?\n\nಆ್ಯಪ್: ${APP_URL}\nಮಂಡಲಕ್ಕೆ ಸೇರಲು: ${WA_GROUP}\n\n— ${s.name}\n${FOOT}`;
 
 /* ── progress backup / transfer ─────────────────────────── */
-const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "plan", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "log", "schema", "shields", "shieldDays", "bestStreak", "speedBest", "haptics", "theme"];
+const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "plan", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "log", "schema", "shields", "shieldDays", "bestStreak", "speedBest", "haptics", "theme", "shibira", "fest", "voice"];
 const b64u = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
 export function exportCode(s) {

@@ -66,6 +66,8 @@ export function mergeState(a, b) {
     grammar: union(a.grammar, b.grammar),
     subhashitas: union(a.subhashitas, b.subhashitas),
     readings: union(a.readings, b.readings),
+    shibira: union(a.shibira, b.shibira),
+    fest: union(a.fest, b.fest),
     badges: union(a.badges, b.badges),
     mistakes,
     reports: [...reps.values()],
@@ -89,7 +91,8 @@ export function mergeState(a, b) {
 // total finished items — used to count "new items learned today"
 export const itemCount = (s) =>
   (s.learned?.length || 0) + (s.sentences?.length || 0) + (s.dialogues?.length || 0) +
-  (s.grammar?.length || 0) + (s.subhashitas?.length || 0) + (s.readings?.length || 0);
+  (s.grammar?.length || 0) + (s.subhashitas?.length || 0) + (s.readings?.length || 0) +
+  (s.shibira?.length || 0) + (s.fest?.length || 0);
 
 /* ── ಸಾಧನಾ ಅಂಕ — weekly score, max 200 (same rule in the app and on the server) ──
    each day learned 10 · today's plan complete 5 · new items 1 each (max 10 a day)

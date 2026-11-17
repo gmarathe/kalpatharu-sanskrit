@@ -1,22 +1,22 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES, GRAMMAR, SUBHASHITAS, READINGS, KN_SHARED, WORD_PIC } from "./content.js";
+import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES, GRAMMAR, SUBHASHITAS, READINGS, KN_SHARED, WORD_PIC, SHIBIRA, FESTIVALS } from "./content.js";
 import {
   EMPTY, load, save, migrate, dayNum, weekNum, pad3, pick, shuffle,
   visWords, visSents, visDias, visGram, visSubh, visRead, gradeItem, wordState, isDue, touch, usageOf,
   challengeOfWeek, shareWord, shareSentence, shareLesson, shareBadge, shareChallenge, shareFree, shareSubhashita,
   inviteText, exportCode, importCode, transferLink, WA_GROUP, APP_URL,
   planToday, markPlan, seedSrs, reminderIcs, reminderWa, dayKey, activeReports,
-  liveStreak, levelOf, MILESTONES, MAX_SHIELDS, shareStreak, shareSpeed,
+  liveStreak, levelOf, MILESTONES, MAX_SHIELDS, shareStreak, shareSpeed, shareIntro, shareFest,
 } from "./lib.js";
-import { Confetti, Ring, WeekStrip, Recorder, Trace, InstallCard, drawCard, shareImage, buzz, setHaptics, COACH } from "./delight.jsx";
+import { Confetti, Ring, WeekStrip, Recorder, Trace, Speak, setVoice, InstallCard, drawCard, shareImage, buzz, setHaptics, COACH } from "./delight.jsx";
 import { mergeState, itemCount, weekScore, weekDayKeys, WEEK_MAX } from "./merge.js";
-import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi, fetchBoard } from "./sync.js";
+import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi, fetchBoard, getPush, pushSupported, pushOn, pushOff, pushDone } from "./sync.js";
 import {
   Btn, Header, Bar, ScriptCard, Parts, SrcLine, Quiz, FS,
   wordQ, matchQ, sentQ, distinct, clash, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "3.0";
+const VERSION = "3.1";
 
 /* ── badges ─────────────────────────────────────────────── */
 // g: earned?  p: [done, needed] progress  go: where to go to earn it  h: hint shown on the locked card
@@ -92,8 +92,8 @@ export default function App() {
     const el = document.documentElement;
     el.classList.toggle("dark", s.theme === "dark");
     el.classList.toggle("light", s.theme === "light");
-    setHaptics(s.haptics);
-  }, [s?.theme, s?.haptics]);
+    setHaptics(s.haptics); setVoice(s.voice);
+  }, [s?.theme, s?.haptics, s?.voice]);
 
   function flash(msg, action) {
     clearTimeout(toastT.current);
@@ -145,6 +145,7 @@ export default function App() {
       setTimeout(() => setCeleb(k), 400);
     }
     save(n);
+    if (n.lastDay === dayKey()) pushDone(n.lastDay);
     sRef.current = n;
     if (!opt.nosync) scheduleSync();
     return n;
@@ -448,6 +449,12 @@ function Learn({ api }) {
     <>
       <Header title="ಕಲಿಕೆಯ ಪಥ" sub="ನಿಮ್ಮದೇ ವೇಗದಲ್ಲಿ. ಯಾವಾಗ ಬೇಕಾದರೂ ಸೇರಬಹುದು." />
       <div className="pad path">
+        <button type="button" className="card lvl camp" onClick={() => api.go({ kind: "shibira" })}>
+          <span className="lvl-n">🗣️</span>
+          <span className="lvl-b"><b>ಸಂಭಾಷಣ ಶಿಬಿರ — 10 ದಿನ</b><span className="muted">ದಿನಕ್ಕೆ ಆರು ವಾಕ್ಯ. ಹತ್ತನೇ ದಿನ ನಿಮ್ಮ ಪರಿಚಯ ಸಂಸ್ಕೃತದಲ್ಲಿ.</span>
+            <span className="bprog" aria-hidden="true"><i style={{ width: `${(100 * (s.shibira || []).length) / SHIBIRA.length}%` }} /></span></span>
+          <span className="lvl-p">{(s.shibira || []).length} / {SHIBIRA.length}</span>
+        </button>
         {lv.map((l) => (
           <button type="button" key={l.n} className={`card lvl${l.lock ? " lock" : ""}`} disabled={l.lock}
             onClick={() => api.go({ kind: l.k })}>
@@ -457,6 +464,11 @@ function Learn({ api }) {
             {!l.lock && <span className="lvl-p">{l.pr}</span>}
           </button>
         ))}
+        <button type="button" className="card lvl" onClick={() => api.go({ kind: "fests" })}>
+          <span className="lvl-n">🪔</span>
+          <span className="lvl-b"><b>ಹಬ್ಬದ ಪಾಠಗಳು</b><span className="muted">ಶುಭಾಶಯ, ಐದು ಪದ, ಒಂದು ಶ್ಲೋಕ</span></span>
+          <span className="lvl-p">{(s.fest || []).length} / {FESTIVALS.length}</span>
+        </button>
         <div className="card goal"><b>🪷 ಸಂಸ್ಕೃತಸಾಧಕಃ</b><span className="muted">{s.badges.includes("b15") ? "ಪ್ರಯಾಣದ ಗುರಿ ತಲುಪಿದಿರಿ ✓" : `ಪ್ರಯಾಣದ ಗುರಿ — ${stagesDone(s)} / 6 ಹಂತ ಪೂರ್ಣ`}</span></div>
       </div>
     </>
@@ -511,6 +523,12 @@ function TraceView({ api }) {
       <Header title="ದೇವನಾಗರಿ ಬರೆಯಿರಿ" sub={`${i + 1} / ${all.length} · ಕನ್ನಡ: ${kn}`} onBack={api.close} />
       <div className="pad center">
         <p className="muted">ಮಸುಕಾಗಿ ಕಾಣುವ ಅಕ್ಷರದ ಮೇಲೆ ಬೆರಳಿನಿಂದ ಬರೆಯಿರಿ.</p>
+        <details className="wb-how"><summary className="small">ಬರೆಯುವ ಕ್ರಮ ಹೇಗೆ?</summary>
+          <ul className="small" style={{ textAlign: "left" }}>
+            <li>ಎಡದಿಂದ ಬಲಕ್ಕೆ, ಮೇಲಿನಿಂದ ಕೆಳಕ್ಕೆ ಬರೆಯಿರಿ.</li>
+            <li>ಮೊದಲು ಅಕ್ಷರದ ಮೈ; ಆಮೇಲೆ ನೇರ ಕಂಬದ ಗೆರೆ.</li>
+            <li>ಮೇಲಿನ ಅಡ್ಡ ಗೆರೆ (ಶಿರೋರೇಖೆ) ಕೊನೆಯಲ್ಲಿ.</li>
+          </ul></details>
         <Trace key={i} ch={dv} onGood={() => { setN(n + 1); if (n === 0) api.update((st) => touch({ ...st, xp: st.xp + 1 })); else api.update((st) => ({ ...st, xp: st.xp + 1 })); }} />
         <div className="row two">
           <Btn kind="line" disabled={i === 0} onClick={() => setI(i - 1)}>← ಹಿಂದಿನದು</Btn>
@@ -1014,6 +1032,131 @@ function Reading({ api, id }) {
   );
 }
 
+/* ═══════════════════ ಸಂಭಾಷಣ ಶಿಬಿರ (10 days) ═══════════════════ */
+const okItem = (x) => x.status !== "WITHDRAWN";
+const lineItem = (l) => ({ d: l[0], k: l[1], m: l[2] });
+function ShibiraList({ api }) {
+  const { s } = api;
+  const done = s.shibira || [];
+  const days = SHIBIRA.filter(okItem);
+  const next = days.find((d) => !done.includes(d.id));
+  return (
+    <>
+      <Header title="ಸಂಭಾಷಣ ಶಿಬಿರ" sub="10 ದಿನ · ದಿನಕ್ಕೆ ಸುಮಾರು 10 ನಿಮಿಷ" onBack={api.close} />
+      <div className="pad">
+        <p className="lead">ಓದುವುದಕ್ಕಿಂತ ಹೇಳುವುದು ಮುಖ್ಯ. ಪ್ರತಿ ವಾಕ್ಯವನ್ನು ಗಟ್ಟಿಯಾಗಿ ಹೇಳಿ. ಮನೆಯವರೊಂದಿಗೆ ಬಳಸಿ ನೋಡಿ.</p>
+        {days.map((d) => {
+          const on = done.includes(d.id), cur = next && next.id === d.id;
+          return (
+            <button type="button" key={d.id} className={`card lvl${cur ? " curday" : ""}`} onClick={() => api.go({ kind: "shibiraDay", id: d.id })}>
+              <span className="lvl-n">{on ? "✓" : d.id}</span>
+              <span className="lvl-b"><b>ದಿನ {d.id} — {d.t}</b><span className="muted">{d.s}</span></span>
+              {cur && <span className="lvl-p">ಇಂದು →</span>}
+            </button>
+          );
+        })}
+        <p className="muted small">ಈ ವಾಕ್ಯಗಳು ಇನ್ನೂ ವಿದ್ವಾಂಸರ ಪರಿಶೀಲನೆಯಲ್ಲಿವೆ. ತಪ್ಪು ಕಂಡರೆ ಮಂಡಲದಲ್ಲಿ ತಿಳಿಸಿ 🙏</p>
+      </div>
+    </>
+  );
+}
+function ShibiraDay({ api, id }) {
+  const { s } = api;
+  const day = SHIBIRA.find((d) => d.id === id);
+  const [i, setI] = useState(0);
+  const [phase, setPhase] = useState("learn");
+  const [res, setRes] = useState(null);
+  const [xp0] = useState(s.xp);
+  const qs = useMemo(() => {
+    const all = SHIBIRA.filter(okItem).flatMap((d) => d.lines);
+    return shuffle(day.lines).slice(0, 5).map((l, n) => {
+      const others = shuffle(all.filter((o) => o[2] !== l[2] && o[1] !== l[1])).slice(0, 3);
+      return n % 2
+        ? { type: "mcq", small: true, ask: "ಸಂಸ್ಕೃತದಲ್ಲಿ ಇದನ್ನು ಹೇಗೆ ಹೇಳುತ್ತೀರಿ?", prompt: l[2], answer: l[1], options: shuffle([l[1], ...others.map((o) => o[1])]), why: `${l[1]} = ${l[2]}` }
+        : { type: "mcq", small: true, ask: "ಇದರ ಅರ್ಥವೇನು?", prompt: l[1], promptDev: s.showDeva ? l[0] : null, answer: l[2], options: shuffle([l[2], ...others.map((o) => o[2])]), why: `${l[1]} = ${l[2]}` };
+    });
+  }, [id]);
+  useEffect(() => { window.scrollTo(0, 0); }, [i, phase]);
+  if (!day) return null;
+  const last = id === SHIBIRA[SHIBIRA.length - 1].id;
+  if (res) return (
+    <Done api={api} title={last ? "ಶಿಬಿರ ಪೂರ್ಣ 🎉" : `ದಿನ ${id} ಪೂರ್ಣ 🌿`} res={res} xp0={xp0}
+      line={last ? "ಹತ್ತು ದಿನ ಮುಗಿಸಿದಿರಿ. ಈಗ ನಿಮ್ಮ ಪರಿಚಯವನ್ನು ಸಂಸ್ಕೃತದಲ್ಲಿ ಹೇಳಬಲ್ಲಿರಿ. ಹೆಸರು ಮತ್ತು ಊರನ್ನು ನಿಮ್ಮದಾಗಿಸಿ ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಿ." : "ಇಂದಿನ ವಾಕ್ಯಗಳನ್ನು ಮನೆಯಲ್ಲಿ ಒಮ್ಮೆ ಬಳಸಿ ನೋಡಿ. ನಾಳೆ ಮುಂದಿನ ದಿನ."}
+      shareText={last ? shareIntro(day.lines, s) : null} card={last ? { tag: "ಸಂಭಾಷಣ ಶಿಬಿರ ಪೂರ್ಣ", kan: day.lines.slice(0, 5).map((l) => l[1]) } : null} />
+  );
+  if (phase === "quiz") return <Quiz qs={qs} p={s} title={`ದಿನ ${id} — ಅಭ್ಯಾಸ`} onBack={api.close} onGrade={() => {}}
+    onFinish={(sc, t) => { api.update((st) => touch({ ...st, xp: st.xp + sc * 2 + ((st.shibira || []).includes(id) ? 0 : 10), shibira: (st.shibira || []).includes(id) ? st.shibira : [...(st.shibira || []), id] })); setRes({ s: sc, t }); }} />;
+  const l = day.lines[i];
+  return (
+    <>
+      <Header title={`ದಿನ ${id} — ${day.t}`} sub={`${day.s} · ${i + 1} / ${day.lines.length}`} onBack={api.close} />
+      <div className="pad">
+        <Bar now={i + 1} total={day.lines.length + 1} />
+        <ScriptCard item={{ ...lineItem(l), status: day.status }} p={s} onReport={() => api.report("h", id, `ಶಿಬಿರ ದಿನ ${id}: ${l[0]}`)} />
+        <div className="card say"><b>ಹೇಳಿ</b><p>ಗಟ್ಟಿಯಾಗಿ ಮೂರು ಬಾರಿ ಹೇಳಿ. ಯಾರೊಂದಿಗಾದರೂ ಮಾತನಾಡುತ್ತಿರುವಂತೆ ಹೇಳಿ.</p><Recorder key={i} /></div>
+        <div className="row two">
+          {i > 0 && <Btn kind="line" onClick={() => setI(i - 1)}>ಹಿಂದೆ</Btn>}
+          <Btn onClick={() => (i + 1 < day.lines.length ? setI(i + 1) : setPhase("quiz"))}>{i + 1 < day.lines.length ? "ಮುಂದೆ" : "ಅಭ್ಯಾಸಕ್ಕೆ"}</Btn>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════ ಹಬ್ಬದ ಪಾಠಗಳು ═══════════════════ */
+function FestList({ api }) {
+  const { s } = api;
+  return (
+    <>
+      <Header title="ಹಬ್ಬದ ಪಾಠಗಳು" sub="ಹಬ್ಬದ ದಿನ ಸಂಸ್ಕೃತದಲ್ಲಿ ಶುಭಾಶಯ ಹೇಳಿ" onBack={api.close} />
+      <div className="pad">
+        {FESTIVALS.filter(okItem).map((f) => (
+          <button type="button" key={f.id} className="card lvl" onClick={() => api.go({ kind: "fest", id: f.id })}>
+            <span className="lvl-n">{(s.fest || []).includes(f.id) ? "✓" : f.ic}</span>
+            <span className="lvl-b"><b>{f.t}</b><span className="muted">{f.greet[1]}</span></span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+function Fest({ api, id }) {
+  const { s } = api;
+  const f0 = FESTIVALS.find((x) => x.id === id), f = FS[s.fontStep];
+  if (!f0) return null;
+  const done = (s.fest || []).includes(id);
+  const finish = () => { api.update((st) => touch((st.fest || []).includes(id) ? st : { ...st, fest: [...(st.fest || []), id], xp: st.xp + 10 })); api.flash("ಹಬ್ಬದ ಪಾಠ ಪೂರ್ಣ 🌿"); };
+  const card = { tag: `${f0.t} ${f0.ic}`, dev: f0.greet[0], kan: f0.greet[1], mean: f0.greet[2] };
+  return (
+    <>
+      <Header title={`${f0.ic} ${f0.t}`} sub="ಶುಭಾಶಯ · ಪದಗಳು · ಶ್ಲೋಕ" onBack={api.close} />
+      <div className="pad">
+        <ScriptCard item={{ d: f0.greet[0], k: f0.greet[1], m: f0.greet[2], status: f0.status }} p={s} tag="ಶುಭಾಶಯ"
+          onShare={() => api.share(shareFest(f0, s), card)} onReport={() => api.report("f", id, `ಹಬ್ಬ: ${f0.t}`)} />
+        <div className="sec-t">ಐದು ಪದಗಳು</div>
+        <div className="card gtable">
+          {f0.words.map((w, i) => (
+            <div key={i} className="grow">
+              {s.showDeva && <span className="dev" style={{ fontSize: 20 * f }}>{w[0]}</span>}
+              <span className="kan" style={{ fontSize: 19 * f }}>{w[1]} <Speak text={w[1]} small /></span>
+              <span>{w[2]}</span>
+            </div>
+          ))}
+        </div>
+        <div className="card verse">
+          <div className="tag">ಶ್ಲೋಕ</div>
+          {s.showDeva && <div className="dev vdev" style={{ fontSize: 19 * f }}>{f0.verse.map((l, i) => <div key={i}>{l[0]}</div>)}</div>}
+          <div className="kan vkan" style={{ fontSize: 18 * f }}>{f0.verse.map((l, i) => <div key={i}>{l[1]}</div>)}</div>
+          <div className="mean" style={{ fontSize: 16 * f }}>{f0.m}</div>
+          <div className="card-foot"><span className="src">{f0.from} · ಪರಿಶೀಲನೆ ಬಾಕಿ</span></div>
+        </div>
+        <Btn wide onClick={() => api.share(shareFest(f0, s), card)}>ಶುಭಾಶಯ ಹಂಚಿಕೊಳ್ಳಿ</Btn>
+        {!done && <Btn wide kind="line" onClick={finish}>ಓದಿದೆ, ಹೇಳಿದೆ ✓</Btn>}
+      </div>
+    </>
+  );
+}
+
 /* ═══════════════════ 60-second game ═══════════════════ */
 // learned words only; quick picks, no SRS grading (guessing at speed shouldn't change review dates)
 function Speed({ api }) {
@@ -1446,6 +1589,8 @@ function Me({ api, setTab }) {
           <p className="muted small">ಕನ್ನಡ ಲಿಪಿ ಸದಾ ಕಾಣುತ್ತದೆ.</p>
           <label className="switch"><input type="checkbox" checked={!!s.contrast} onChange={() => update({ contrast: !s.contrast })} /> ಹೆಚ್ಚು ಸ್ಪಷ್ಟ ಬಣ್ಣಗಳು (ಹೈ-ಕಾಂಟ್ರಾಸ್ಟ್)</label>
           <label className="switch"><input type="checkbox" checked={s.haptics !== false} onChange={() => update({ haptics: s.haptics === false })} /> ಉತ್ತರಕ್ಕೆ ಸಣ್ಣ ಕಂಪನ (Android)</label>
+          <label className="switch"><input type="checkbox" checked={s.voice !== false} onChange={() => update({ voice: s.voice === false })} /> 🔊 ಪದವನ್ನು ಓದಿ ಕೇಳಿಸು (ಫೋನಿನಲ್ಲಿ ಕನ್ನಡ ಧ್ವನಿ ಇದ್ದರೆ)</label>
+          <p className="muted small">ಇದು ಫೋನಿನ ಯಂತ್ರ ಧ್ವನಿ; ಉಚ್ಚಾರಣೆ ಪೂರ್ತಿ ನಿಖರವಲ್ಲ. ಕನ್ನಡ ಲಿಪಿಯೇ ಮುಖ್ಯ ಮಾರ್ಗದರ್ಶಿ.</p>
           <div className="muted small" style={{ marginTop: 12 }}>ಬಣ್ಣದ ಶೈಲಿ</div>
           <div className="seg">{[["auto", "ಫೋನಿನಂತೆ"], ["light", "ಹಗಲು"], ["dark", "ರಾತ್ರಿ"]].map(([k, l]) => (
             <button type="button" key={k} className={(s.theme || "auto") === k ? "on" : ""} aria-pressed={(s.theme || "auto") === k} onClick={() => update({ theme: k })}>{l}</button>))}</div>
@@ -1459,7 +1604,8 @@ function Me({ api, setTab }) {
 
         <div className="sec-t">ದಿನನಿತ್ಯದ ನೆನಪು</div>
         <div className="card">
-          <p className="small">ಆ್ಯಪ್ ಇನ್ನೂ ತಾನಾಗಿ ನೆನಪಿಸುವುದಿಲ್ಲ. ಫೋನಿನ ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ದಿನನಿತ್ಯದ ನೆನಪು ಸೇರಿಸಿ, ಅಥವಾ ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ನಿಮಗೇ ಒಂದು ಸಂದೇಶ ಕಳಿಸಿ ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ.</p>
+          <PushCard api={api} time={remT} />
+          <p className="small">ಅಥವಾ ಫೋನಿನ ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ದಿನನಿತ್ಯದ ನೆನಪು ಸೇರಿಸಿ, ಇಲ್ಲವೇ ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ನಿಮಗೇ ಒಂದು ಸಂದೇಶ ಕಳಿಸಿ ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ.</p>
           <div className="row"><label className="muted small" htmlFor="remT">ಸಮಯ</label><input id="remT" type="time" className="input" value={remT} onChange={(e) => setRemT(e.target.value)} /></div>
           <div className="row two">
             <a className="btn btn-solid small" href={reminderIcs(remT)} download="sanskrit-daily.ics">ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ಸೇರಿಸಿ</a>
@@ -1502,6 +1648,30 @@ function Me({ api, setTab }) {
         <p className="muted center small">ಆವೃತ್ತಿ {VERSION}</p>
       </div>
     </>
+  );
+}
+
+/* gentle daily reminder — only if the learner turns it on; one a day, none once today's learning is done */
+function PushCard({ api, time }) {
+  const key = api.cloud.cfg?.pushKey;
+  const [p, setP] = useState(getPush());
+  const [busy, setBusy] = useState(false);
+  if (!key || !pushSupported()) return <p className="small muted">ಈ ಫೋನ್/ಬ್ರೌಸರ್‌ನಲ್ಲಿ ಆ್ಯಪ್ ತಾನಾಗಿ ನೆನಪಿಸಲು ಆಗುವುದಿಲ್ಲ. iPhone‌ನಲ್ಲಿ ಮೊದಲು ಆ್ಯಪ್ ಅನ್ನು ಮುಖಪುಟಕ್ಕೆ ಸೇರಿಸಿ.</p>;
+  const on = async () => {
+    setBusy(true);
+    try { await pushOn(key, time); setP(getPush()); api.flash(`ಪ್ರತಿದಿನ ${time} ಕ್ಕೆ ಒಂದು ಸೌಮ್ಯ ನೆನಪು ಬರುತ್ತದೆ 🌿`); }
+    catch (e) { api.flash(e.message === "denied" ? "ಸೂಚನೆಗಳಿಗೆ ಅನುಮತಿ ಸಿಗಲಿಲ್ಲ. ಫೋನಿನ ಸೆಟ್ಟಿಂಗ್‌ನಲ್ಲಿ ಅನುಮತಿ ಕೊಡಿ." : "ನೆನಪು ಹೊಂದಿಸಲು ಆಗಲಿಲ್ಲ. ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ."); }
+    setBusy(false);
+  };
+  const off = async () => { setBusy(true); await pushOff(); setP(null); setBusy(false); api.flash("ನೆನಪು ನಿಲ್ಲಿಸಲಾಗಿದೆ."); };
+  return (
+    <div className="pushbox">
+      <p className="small"><b>🔔 ಆ್ಯಪ್‌ನಿಂದ ದಿನಕ್ಕೊಂದು ನೆನಪು</b><br />{p ? `ಪ್ರತಿದಿನ ${p.time} ಕ್ಕೆ. ಆ ದಿನ ಈಗಾಗಲೇ ಕಲಿತಿದ್ದರೆ ಬರುವುದಿಲ್ಲ.` : "ಕೆಳಗಿನ ಸಮಯಕ್ಕೆ ದಿನಕ್ಕೆ ಒಂದೇ ಒಂದು ಸೌಮ್ಯ ನೆನಪು. ಆ ದಿನ ಕಲಿತಿದ್ದರೆ ಬರುವುದಿಲ್ಲ. ಯಾವಾಗ ಬೇಕಾದರೂ ನಿಲ್ಲಿಸಬಹುದು."}</p>
+      <div className="row two">
+        <Btn small disabled={busy} onClick={on}>{p ? "ಸಮಯ ಬದಲಿಸಿ" : "ನೆನಪು ಆರಂಭಿಸಿ"}</Btn>
+        {p && <Btn small kind="line" disabled={busy} onClick={off}>ನಿಲ್ಲಿಸಿ</Btn>}
+      </div>
+    </div>
   );
 }
 
@@ -1647,7 +1817,7 @@ function ReportSheet({ r, close, api }) {
   const send = () => {
     api.update((st) => ({ ...st, reports: [...st.reports.filter((x) => !(x.kind === r.kind && x.id === r.id)), { ...r, note: note.trim() || undefined, on: new Date().toISOString().slice(0, 10), at: Date.now() }] }));
     close();
-    if ("durg".includes(r.kind)) api.close(); // full-screen item just got hidden — leave it
+    if ("durghf".includes(r.kind)) api.close(); // full-screen item just got hidden — leave it
     api.flash("ತಿಳಿಸಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದ. ಪರಿಶೀಲಿಸುತ್ತೇವೆ 🙏");
   };
   return (
@@ -1689,5 +1859,5 @@ function Nav({ tab, setTab }) {
 const VIEWS = {
   l0: Level0, l1: Level1, lesson: Lesson, l2: Level2, squiz: SentenceQuiz, l3: Level3, dialogue: Dialogue,
   l4: Level4, grammar: GrammarLesson, gquiz: GrammarQuiz, l5: Level5, subhashita: Subhashita, uquiz: SubhashitaQuiz, l6: Level6, reading: Reading,
-  review: Review, flash: Flash, search: Search, speed: Speed, known: Known, trace: TraceView,
+  review: Review, flash: Flash, search: Search, speed: Speed, known: Known, trace: TraceView, shibira: ShibiraList, shibiraDay: ShibiraDay, fests: FestList, fest: Fest,
 };

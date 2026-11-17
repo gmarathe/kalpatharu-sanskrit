@@ -308,3 +308,35 @@ export function Trace({ ch, onGood }) {
     </div>
   );
 }
+
+/* ── 🔊 read aloud with the phone's own Kannada voice (the Kannada script is the pronunciation guide,
+   and a Kannada voice keeps every vowel — a Hindi voice would drop the final "a"). Hidden when the phone
+   has no Kannada voice. This is a helper, not a reviewed recording. ── */
+let knVoice = null, voiceOn = true;
+const voiceSubs = new Set();
+export const setVoice = (on) => { voiceOn = on !== false; voiceSubs.forEach((f) => f()); };
+function findVoice() {
+  try {
+    const v = speechSynthesis.getVoices().find((x) => /^kn([-_]|$)/i.test(x.lang));
+    if (v && v !== knVoice) { knVoice = v; voiceSubs.forEach((f) => f()); }
+  } catch {}
+}
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
+  findVoice();
+  try { speechSynthesis.addEventListener("voiceschanged", findVoice); } catch {}
+}
+export function Speak({ text, small }) {
+  const [, force] = useState(0);
+  useEffect(() => { const f = () => force((x) => x + 1); voiceSubs.add(f); return () => voiceSubs.delete(f); }, []);
+  if (!knVoice || !voiceOn || !text) return null;
+  const say = (e) => {
+    e.stopPropagation();
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(String(text).replace(/[.?।॥]/g, " "));
+      u.voice = knVoice; u.lang = knVoice.lang; u.rate = 0.8;
+      speechSynthesis.speak(u);
+    } catch {}
+  };
+  return <button type="button" className={`speak${small ? " sm" : ""}`} onClick={say} aria-label="ಕೇಳಿ">🔊</button>;
+}

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { pad3, shuffle, pick, tokens } from "./lib.js";
-import { buzz } from "./delight.jsx";
+import { buzz, Speak } from "./delight.jsx";
 
 export const FS = [0.86, 1, 1.2];
 
@@ -43,7 +43,7 @@ export function ScriptCard({ item, p, split, tip, tag, onReport, onShare, compac
       {(tag || kn) && <div className="tag-row">{tag && <div className="tag">{tag}</div>}{kn && <span className="knchip">ಕನ್ನಡದಲ್ಲೂ ಇದೆ ✓</span>}</div>}
       {pic && <div className="wpic" aria-hidden="true">{pic}</div>}
       {p.showDeva && <div className="dev" style={{ fontSize: (compact ? 24 : 34) * f }}>{item.d}</div>}
-      <div className="kan" style={{ fontSize: (compact ? 22 : 30) * f }}>{item.k}</div>
+      <div className="kan" style={{ fontSize: (compact ? 22 : 30) * f }}>{item.k} <Speak text={item.k} small={compact} /></div>
       {split && <div className="split">{split}</div>}
       <div className="mean" style={{ fontSize: 17 * f }}>{item.m}</div>
       {tip && <div className="tip">💡 {tip}</div>}
