@@ -1,7 +1,7 @@
 // Offline cache. Pages and app code: network first (updates arrive at once),
 // cached copy when offline. Fonts and icons: cache first.
 const CACHE = "ksm-__VERSION__";
-const SHELL = ["/", "/app.js", "/manifest.webmanifest", "/icons/icon-192.png",
+const SHELL = ["/", "/app.js", ...__CHUNKS__, "/manifest.webmanifest", "/icons/icon-192.png",
   "/fonts/kn-400.woff2", "/fonts/kn-700.woff2", "/fonts/la-400.woff2", "/fonts/la-700.woff2",
   "/fonts/dv-400.woff2", "/fonts/dv-700.woff2"];
 
@@ -35,4 +35,20 @@ self.addEventListener("fetch", (e) => {
   const offline = () => cached().then((hit) => hit || Response.error());
   const slow = new Promise((r) => setTimeout(r, 3000)).then(cached).then((hit) => hit || net);
   e.respondWith(Promise.race([net.catch(offline), slow.catch(offline)]));
+});
+
+// Daily reminder: the push carries no text — one fixed, gentle line. Tapping it opens today's lesson.
+self.addEventListener("push", (e) => {
+  e.waitUntil(self.registration.showNotification("ಸಂಸ್ಕೃತ — ಇಂದಿನ ಐದು ನಿಮಿಷ 🌿", {
+    body: "ಒಂದು ಪದ, ಒಂದು ವಾಕ್ಯ. ನಿಮಗೆ ಬಿಡುವಾದಾಗ ಬನ್ನಿ.", icon: "/icons/icon-192.png", badge: "/icons/icon-192.png",
+    tag: "ksm-daily", renotify: false, data: { url: "/?go=lesson" },
+  }));
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = e.notification.data?.url || "/";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
+    for (const c of cs) if ("focus" in c) { c.navigate?.(url); return c.focus(); }
+    return self.clients.openWindow(url);
+  }));
 });

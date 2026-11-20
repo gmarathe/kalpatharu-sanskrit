@@ -24,8 +24,11 @@
   // ಪರೀಕ್ಷಾ (preview) ಆವೃತ್ತಿಗಳು: ಪ್ರತ್ಯೇಕ ಡೇಟಾಬೇಸ್ — ನಿಜವಾದ ಸದಸ್ಯರ ಪ್ರಗತಿ ಮುಟ್ಟುವುದಿಲ್ಲ.
   "previews": {
     "vars": { "GOOGLE_CLIENT_ID": "", "ADMIN_EMAILS": "" },
-    "d1_databases": [{ "binding": "DB", "database_name": "kalpatharu-sanskrit-preview" }]
+    // ಪರೀಕ್ಷಾ ಆವೃತ್ತಿಯಲ್ಲಿ ಡೇಟಾಬೇಸ್ ಇಲ್ಲ — ಲಾಗಿನ್/ಪಟ್ಟಿ ಕಾಣುವುದಿಲ್ಲ, ಉಳಿದ ಆ್ಯಪ್ ಪೂರ್ತಿ ನಡೆಯುತ್ತದೆ
+    "d1_databases": []
   },
+  // ದಿನನಿತ್ಯದ ನೆನಪು: 15 ನಿಮಿಷಕ್ಕೊಮ್ಮೆ, ಆ ಸಮಯ ಆರಿಸಿದವರಿಗೆ ಮಾತ್ರ (src/worker.js → sendReminders)
+  "triggers": { "crons": ["*/15 * * * *"] },
   "observability": { "enabled": true }
   // ಡೊಮೈನ್: ksm.kalpatharu.org (Worker → Settings → Domains & Routes)
 }

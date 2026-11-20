@@ -66,12 +66,19 @@ export function mergeState(a, b) {
     grammar: union(a.grammar, b.grammar),
     subhashitas: union(a.subhashitas, b.subhashitas),
     readings: union(a.readings, b.readings),
+    shibira: union(a.shibira, b.shibira),
+    fest: union(a.fest, b.fest),
     badges: union(a.badges, b.badges),
     mistakes,
     reports: [...reps.values()],
     srs,
     xp: Math.max(a.xp || 0, b.xp || 0),
     streak: later.streak || 0, lastDay: later.lastDay || null,
+    // shields travel with the streak they protect
+    shields: later.shields ?? a.shields ?? b.shields ?? 1,
+    shieldDays: union(a.shieldDays, b.shieldDays).sort().slice(-30),
+    bestStreak: Math.max(a.bestStreak || 0, b.bestStreak || 0, later.streak || 0),
+    speedBest: Math.max(a.speedBest || 0, b.speedBest || 0),
     challengeTicks: ticks,
     challengeAt: ticksAt,
     shares: Math.max(a.shares || 0, b.shares || 0),
@@ -84,7 +91,8 @@ export function mergeState(a, b) {
 // total finished items — used to count "new items learned today"
 export const itemCount = (s) =>
   (s.learned?.length || 0) + (s.sentences?.length || 0) + (s.dialogues?.length || 0) +
-  (s.grammar?.length || 0) + (s.subhashitas?.length || 0) + (s.readings?.length || 0);
+  (s.grammar?.length || 0) + (s.subhashitas?.length || 0) + (s.readings?.length || 0) +
+  (s.shibira?.length || 0) + (s.fest?.length || 0);
 
 /* ── ಸಾಧನಾ ಅಂಕ — weekly score, max 200 (same rule in the app and on the server) ──
    each day learned 10 · today's plan complete 5 · new items 1 each (max 10 a day)

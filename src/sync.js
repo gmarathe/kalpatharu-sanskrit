@@ -49,3 +49,30 @@ export function loadGsi() {
   });
   return gsiP;
 }
+
+/* ── daily reminder (Web Push) — opt-in only ── */
+const PUSH_KEY = "ksm-push";
+export const getPush = () => { try { return JSON.parse(localStorage.getItem(PUSH_KEY) || "null"); } catch { return null; } };
+const setPush = (v) => { try { v ? localStorage.setItem(PUSH_KEY, JSON.stringify(v)) : localStorage.removeItem(PUSH_KEY); } catch {} };
+export const pushSupported = () => typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const keyBytes = (b) => Uint8Array.from(atob(b.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b.length % 4)) % 4)), (c) => c.charCodeAt(0));
+export async function pushOn(pushKey, time) {
+  if ((await Notification.requestPermission()) !== "granted") throw new Error("denied");
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(pushKey) }));
+  await call("/api/push/subscribe", { method: "POST", data: { endpoint: sub.endpoint, time } });
+  setPush({ endpoint: sub.endpoint, time });
+}
+export async function pushOff() {
+  const p = getPush();
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch {}
+  if (p) await call("/api/push/unsubscribe", { method: "POST", data: { endpoint: p.endpoint } }).catch(() => {});
+  setPush(null);
+}
+// tell the server once a day that today's learning is done, so no reminder comes
+export function pushDone(day) {
+  const p = getPush();
+  if (!p || p.done === day) return;
+  setPush({ ...p, done: day });
+  call("/api/push/done", { method: "POST", data: { endpoint: p.endpoint } }).catch(() => setPush({ ...p, done: null }));
+}

@@ -32,6 +32,17 @@ export const EMPTY = {
   l0done: false,
   plan: null,         // { day:"YYYY-MM-DD", w, s, r, u } — ಇಂದಿನ ಯೋಜನೆಯ ಗುರುತುಗಳು
   log: {},            // "YYYY-MM-DD" → { n: ಹೊಸ ಐಟಂಗಳು, p: ಯೋಜನೆ ಪೂರ್ಣ 0|1 } — ವಾರದ ಅಂಕಗಳಿಗೆ
+  // v3
+  shields: 1,         // ಸರಣಿ ರಕ್ಷೆ 🛡️ — ತಪ್ಪಿದ ಒಂದು ದಿನವನ್ನು ಕಾಯುತ್ತದೆ (ಗರಿಷ್ಠ 2; ಪ್ರತಿ 7 ದಿನಕ್ಕೆ ಒಂದು ಉಚಿತ)
+  shieldDays: [],     // ರಕ್ಷೆ ಬಳಸಿದ ದಿನಗಳು "YYYY-MM-DD"
+  bestStreak: 0,
+  speedBest: 0,       // 60 ಸೆಕೆಂಡ್ ಸವಾಲಿನ ಅತ್ಯುತ್ತಮ ಅಂಕ
+  haptics: true,      // ಉತ್ತರಕ್ಕೆ ಸಣ್ಣ ಕಂಪನ (Android)
+  theme: "auto",      // "auto" | "light" | "dark"
+  // v3.1
+  shibira: [],        // ಸಂಭಾಷಣ ಶಿಬಿರದ ಮುಗಿದ ದಿನಗಳು
+  fest: [],           // ಮುಗಿದ ಹಬ್ಬದ ಪಾಠಗಳು
+  voice: true,        // 🔊 ಫೋನಿನ ಕನ್ನಡ ಧ್ವನಿಯಲ್ಲಿ ಓದಿ ಕೇಳಿಸು
 };
 
 /* ── daily plan ─────────────────────────────────────────── */
@@ -104,13 +115,52 @@ export function wordState(s, id) {
 }
 export const isDue = (s, key) => (s.srs[key]?.due ?? 0) <= dayNum();
 
-/* streak: any learning activity counts for the local day */
+/* streak: any learning activity counts for the local day.
+   ಸರಣಿ ರಕ್ಷೆ: a missed day (at most two) is covered by a shield, so one busy day
+   doesn't wipe out weeks of practice. A new shield every 7 days of streak, max 2. Never paid. */
+export const MAX_SHIELDS = 2;
 export function touch(s) {
   const today = dayKey();
   if (s.lastDay === today) return s;
-  const yest = dayKey(dayNum() - 1);
-  return { ...s, lastDay: today, streak: s.lastDay === yest ? s.streak + 1 : 1 };
+  const now = dayNum();
+  const last = s.lastDay ? Math.round(Date.parse(s.lastDay) / 864e5) : null;
+  const gap = last == null ? null : now - last - 1;          // missed days in between
+  const shields = s.shields ?? 1;
+  let streak = 1, used = [];
+  if (gap === 0) streak = (s.streak || 0) + 1;
+  else if (gap > 0 && gap <= shields && (s.streak || 0) > 0) {
+    used = Array.from({ length: gap }, (_, i) => dayKey(last + 1 + i));
+    streak = (s.streak || 0) + 1;
+  }
+  let sh = shields - used.length;
+  if (streak > 1 && streak % 7 === 0) sh = Math.min(MAX_SHIELDS, sh + 1);
+  return {
+    ...s, lastDay: today, streak, shields: sh,
+    shieldDays: used.length ? [...(s.shieldDays || []), ...used].slice(-30) : (s.shieldDays || []),
+    bestStreak: Math.max(s.bestStreak || 0, streak),
+  };
 }
+// streak as it stands today: if yesterday was missed and no shield can cover it, it has already ended
+export function liveStreak(s) {
+  if (!s.lastDay) return 0;
+  const last = Math.round(Date.parse(s.lastDay) / 864e5), gap = dayNum() - last - 1;
+  if (gap <= 0) return s.streak || 0;
+  return gap <= (s.shields ?? 1) ? s.streak || 0 : 0;
+}
+
+/* ── ಸೋಪಾನ — levels by ಅಂಕ (xp) ─────────────────────────── */
+export const LEVELS = [
+  [0, "ಪ್ರವೇಶಃ", "ಪ್ರವೇಶ"], [40, "ಪರಿಚಯಃ", "ಪರಿಚಯ"], [120, "ಅಭ್ಯಾಸಃ", "ಅಭ್ಯಾಸ"], [250, "ಪಠನಮ್", "ಓದು"],
+  [450, "ಸಂಭಾಷಣಮ್", "ಮಾತು"], [750, "ಸಾಧನಾ", "ಸಾಧನೆ"], [1200, "ಪ್ರಾವೀಣ್ಯಮ್", "ನಿಪುಣತೆ"], [1800, "ಪಾಣ್ಡಿತ್ಯಮ್", "ಪಾಂಡಿತ್ಯ"],
+];
+export function levelOf(xp = 0) {
+  let i = 0;
+  while (i + 1 < LEVELS.length && xp >= LEVELS[i + 1][0]) i++;
+  const [from, t, m] = LEVELS[i], to = LEVELS[i + 1]?.[0] ?? null;
+  return { n: i + 1, t, m, from, to, pct: to ? Math.round((100 * (xp - from)) / (to - from)) : 100 };
+}
+// streak milestones that get a full-screen celebration
+export const MILESTONES = [3, 7, 21, 40, 108];
 
 /* ── helpers ───────────────────────────────────────────── */
 export const shuffle = (a) => { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
@@ -137,13 +187,17 @@ export const shareWord = (w, s) => `${HEAD}\nಇಂದು ನಾನು ಕಲಿ
 export const shareSentence = (x, s) => `${HEAD}\nಇಂದಿನ ವಾಕ್ಯ:\n\n${x.d}\n${x.k}\n${x.m}\n\n${sig(s, "ವಾಕ್ಯ #" + pad3(x.id))}\n${FOOT}`;
 export const shareLesson = (ws, s) => `${HEAD}\nಇಂದು ನಾನು ${ws.length === 1 ? "ಒಂದು ಹೊಸ ಪದವನ್ನು" : `${ws.length} ಹೊಸ ಪದಗಳನ್ನು`} ಕಲಿತೆ:\n\n${ws.map((w) => `${w.d} — ${w.k} — ${w.m}`).join("\n")}\n\n— ${s.name}${fire(s)}\n${FOOT}`;
 export const shareBadge = (b, s) => `${HEAD}\nಹೊಸ ಸಾಧನೆ: ${b.t} 🏅\n(${b.d})\n\n— ${s.name}${fire(s)}\n${FOOT}`;
+export const shareIntro = (lines, s) => `${HEAD}\nಸಂಭಾಷಣ ಶಿಬಿರ ಪೂರ್ಣ — ನನ್ನ ಪರಿಚಯ ಸಂಸ್ಕೃತದಲ್ಲಿ:\n\n${lines.map((l) => `${l[0]}\n${l[1]}`).join("\n")}\n\n— ${s.name}\n${FOOT}`;
+export const shareFest = (f, s) => `${HEAD}\n${f.greet[0]}\n${f.greet[1]}\n${f.greet[2]} ${f.ic}\n\n${f.verse.map((l) => l[0]).join("\n")}\n\n${f.verse.map((l) => l[1]).join("\n")}\n\n${f.m}\n\n— ${s.name}\n${FOOT}`;
+export const shareStreak = (n, s) => `${HEAD}\nಸತತ ${n} ದಿನಗಳ ಸಂಸ್ಕೃತ ಅಭ್ಯಾಸ 🔥\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ — ನಿಧಾನವಾಗಿ, ನಿಯಮಿತವಾಗಿ.\n\n— ${s.name}\n${APP_URL}\n${FOOT}`;
+export const shareSpeed = (n, s) => `${HEAD}\n60 ಸೆಕೆಂಡ್ ಸವಾಲಿನಲ್ಲಿ ${n} ಸಂಸ್ಕೃತ ಪದಗಳು ⚡\nನೀವೂ ಪ್ರಯತ್ನಿಸಿ: ${APP_URL}\n\n— ${s.name}\n${FOOT}`;
 export const shareChallenge = (c, s) => `${HEAD}\nಈ ವಾರದ ಸವಾಲು ಪೂರ್ಣಗೊಳಿಸಿದೆ ✅\n\n${c}\n\n— ${s.name}${fire(s)}\n${FOOT}`;
 export const shareFree = (prompt, s) => `${HEAD}\n${prompt}\n\n(ಇಲ್ಲಿ ಕನ್ನಡದಲ್ಲಿ ಬರೆಯಿರಿ)\n\n— ${s.name}\n${FOOT}`;
 export const shareSubhashita = (v, s) => `${HEAD}\nಇಂದಿನ ಸುಭಾಷಿತ:\n\n${v.lines.map((l) => l[0]).join("\n")}\n\n${v.lines.map((l) => l[1]).join("\n")}\n\n${v.m}\n(${v.from})\n\n${sig(s, "ಸುಭಾಷಿತ #" + pad3(v.id))}\n${FOOT}`;
 export const inviteText = (s) => `${HEAD}\nನಾನು ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲದಲ್ಲಿ ಸಂಸ್ಕೃತ ಕಲಿಯಲು ಶುರು ಮಾಡಿದ್ದೇನೆ.\nದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ ಸಾಕು. ನೀವೂ ಜೊತೆಗೆ ಕಲಿಯುತ್ತೀರಾ?\n\nಆ್ಯಪ್: ${APP_URL}\nಮಂಡಲಕ್ಕೆ ಸೇರಲು: ${WA_GROUP}\n\n— ${s.name}\n${FOOT}`;
 
 /* ── progress backup / transfer ─────────────────────────── */
-const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "plan", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "log", "schema"];
+const SAVE_FIELDS = ["name", "onboarded", "showDeva", "fontStep", "contrast", "learned", "sentences", "dialogues", "grammar", "subhashitas", "readings", "plan", "srs", "mistakes", "xp", "streak", "lastDay", "badges", "shares", "challengeTicks", "reports", "l0done", "log", "schema", "shields", "shieldDays", "bestStreak", "speedBest", "haptics", "theme", "shibira", "fest", "voice"];
 const b64u = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
 export function exportCode(s) {

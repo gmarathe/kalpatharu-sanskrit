@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES, GRAMMAR, SUBHASHITAS, READINGS } from "./content.js";
+import { VOWELS, CONSONANTS, NOTES, MODULES, WORDS, SENTENCES, DIALOGUES, GRAMMAR, SUBHASHITAS, READINGS, KN_SHARED, WORD_PIC, SHIBIRA, FESTIVALS } from "./content.js";
 import {
   EMPTY, load, save, migrate, dayNum, weekNum, pad3, pick, shuffle,
   visWords, visSents, visDias, visGram, visSubh, visRead, gradeItem, wordState, isDue, touch, usageOf,
   challengeOfWeek, shareWord, shareSentence, shareLesson, shareBadge, shareChallenge, shareFree, shareSubhashita,
   inviteText, exportCode, importCode, transferLink, WA_GROUP, APP_URL,
   planToday, markPlan, seedSrs, reminderIcs, reminderWa, dayKey, activeReports,
+  liveStreak, levelOf, MILESTONES, MAX_SHIELDS, shareStreak, shareSpeed, shareIntro, shareFest,
 } from "./lib.js";
+import { Confetti, Ring, WeekStrip, Recorder, Trace, Speak, setVoice, InstallCard, drawCard, shareImage, buzz, setHaptics, COACH } from "./delight.jsx";
 import { mergeState, itemCount, weekScore, weekDayKeys, WEEK_MAX } from "./merge.js";
-import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi, fetchBoard } from "./sync.js";
+import { getAuth, setAuth, getConfig, signInGoogle, fetchMe, saveProfile, logout, pushState, loadGsi, fetchBoard, getPush, pushSupported, pushOn, pushOff, pushDone } from "./sync.js";
 import {
   Btn, Header, Bar, ScriptCard, Parts, SrcLine, Quiz, FS,
-  wordQ, matchQ, sentQ, distinct, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
+  wordQ, matchQ, sentQ, distinct, clash, nextLineQ, letterQ, alignable, grammarQuiz, gramReviewQ, subhFillQ, gistQ, readQ,
 } from "./ui.jsx";
 
-const VERSION = "2.8";
+const VERSION = "3.1";
 
 /* ── badges ─────────────────────────────────────────────── */
 // g: earned?  p: [done, needed] progress  go: where to go to earn it  h: hint shown on the locked card
@@ -50,6 +52,7 @@ export default function App() {
   const [view, setView] = useState(null);     // full-screen sub view
   const [sheet, setSheet] = useState(null);   // { kind:"share"|"report"|"import", ... }
   const [toast, setToast] = useState(null);
+  const [celeb, setCeleb] = useState(null);   // streak milestone overlay
   const toastT = useRef();
   const sRef = useRef(null);
   // cloud save: cfg from /api/config, auth token in localStorage, user profile from server
@@ -63,7 +66,13 @@ export default function App() {
       try { setSheet({ kind: "import", data: importCode(m[1]) }); } catch { flash("ಈ ವರ್ಗಾವಣೆ ಲಿಂಕ್ ಸರಿಯಿಲ್ಲ."); }
       history.replaceState(null, "", location.pathname);
     };
-    load().then((st) => { sRef.current = st; setS(st); checkHash(); });
+    load().then((st) => {
+      sRef.current = st; setS(st); checkHash();
+      // home-screen shortcuts: /?go=lesson | review | speed
+      const go = new URLSearchParams(location.search).get("go");
+      if (st.onboarded && ["lesson", "review", "speed"].includes(go)) setView({ kind: go });
+      if (go) history.replaceState(null, "", location.pathname);
+    });
     getConfig().then((cfg) => {
       setCloud((c) => ({ ...c, cfg }));
       const a = getAuth();
@@ -78,6 +87,13 @@ export default function App() {
     return () => { removeEventListener("hashchange", checkHash); document.removeEventListener("visibilitychange", onHide); };
   }, []);
   useEffect(() => { if (s) document.documentElement.classList.toggle("hc", !!s.contrast); }, [s?.contrast]);
+  useEffect(() => {
+    if (!s) return;
+    const el = document.documentElement;
+    el.classList.toggle("dark", s.theme === "dark");
+    el.classList.toggle("light", s.theme === "light");
+    setHaptics(s.haptics); setVoice(s.voice);
+  }, [s?.theme, s?.haptics, s?.voice]);
 
   function flash(msg, action) {
     clearTimeout(toastT.current);
@@ -120,10 +136,16 @@ export default function App() {
     if (fresh.length) {
       n = { ...n, badges: [...n.badges, ...fresh.map((b) => b.id)] };
       const b = fresh[fresh.length - 1];
-      setTimeout(() => flash(`🏅 ಹೊಸ ಸಾಧನೆ: ${b.t}`, { label: "ಹಂಚಿಕೊಳ್ಳಿ", run: () => setSheet({ kind: "share", text: shareBadge(b, n) }) }), 50);
+      setTimeout(() => flash(`🏅 ಹೊಸ ಸಾಧನೆ: ${b.t}`, { label: "ಹಂಚಿಕೊಳ್ಳಿ", run: () => setSheet({ kind: "share", text: shareBadge(b, n), card: badgeCard(b) }) }), 50);
     }
     if (!opt.nolog) n = logToday(prev, n);
+    // a new streak milestone (3, 7, 21, 40, 108 days) — once, on the day it is reached
+    if (!opt.nolog && n.streak !== prev.streak && MILESTONES.includes(n.streak) && n.lastDay === dayKey()) {
+      const k = n.streak;
+      setTimeout(() => setCeleb(k), 400);
+    }
     save(n);
+    if (n.lastDay === dayKey()) pushDone(n.lastDay);
     sRef.current = n;
     if (!opt.nosync) scheduleSync();
     return n;
@@ -168,7 +190,7 @@ export default function App() {
   const api = {
     s, update, flash, cloud, cloudApi,
     go: setView, close: () => setView(null),
-    share: (text) => setSheet({ kind: "share", text }),
+    share: (text, card) => setSheet({ kind: "share", text, card }),
     report: (kind, id, label) => setSheet({ kind: "report", r: { kind, id, label } }),
     grade: (grades) => update((st) => touch(grades.reduce((acc, [k, ok]) => gradeItem(acc, k, ok), st))),
     openImport: (data) => setSheet({ kind: "import", data }),
@@ -201,7 +223,8 @@ export default function App() {
           : <Me api={api} setTab={setTab} />}
       </main>
       {!V && <Nav tab={tab} setTab={setTab} />}
-      {sheet?.kind === "share" && <ShareSheet text={sheet.text} close={() => setSheet(null)}
+      {celeb && !V && <Milestone n={celeb} s={s} close={() => setCeleb(null)} share={() => { const n = celeb; setCeleb(null); setSheet({ kind: "share", text: shareStreak(n, s), card: { tag: "ಸಂಸ್ಕೃತ ಸಾಧನೆ", kan: [`ಸತತ ${n} ದಿನ`], dev: ["अभ्यासेन सिद्धिः"], mean: "ಅಭ್ಯಾಸದಿಂದ ಸಿದ್ಧಿ — ದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ", foot: `🔥 ${n}` } }); }} />}
+      {sheet?.kind === "share" && <ShareSheet text={sheet.text} card={sheet.card} name={s.name} close={() => setSheet(null)}
         onShared={() => update((st) => ({ ...st, shares: st.shares + 1 }))} flash={flash} />}
       {sheet?.kind === "report" && <ReportSheet r={sheet.r} close={() => setSheet(null)} api={api} />}
       {sheet?.kind === "import" && <ImportSheet api={api} data={sheet.data} close={() => setSheet(null)} />}
@@ -226,7 +249,18 @@ function Onboarding({ onDone }) {
         <div className="dev onb-tag">पठामः • वदामः • प्रसारयामः</div>
         <h1>ಕಲ್ಪತರು ಸಂಸ್ಕೃತ ಮಂಡಲಮ್</h1>
         <p className="lead">ದಿನಕ್ಕೆ ಐದು ನಿಮಿಷ. ಒಂದು ಪದ, ಒಂದು ವಾಕ್ಯ. ಅಷ್ಟೇ.</p>
-        <Btn wide onClick={() => setStep(1)}>ಆರಂಭಿಸೋಣ</Btn>
+        <Btn wide onClick={() => setStep(0.5)}>ಆರಂಭಿಸೋಣ</Btn>
+      </>)}
+      {step === 0.5 && (<>
+        <h2>ನಿಮಗೆ ಈಗಾಗಲೇ ಸಂಸ್ಕೃತ ಗೊತ್ತು!</h2>
+        <p className="lead">ಈ ಪದಗಳನ್ನು ಓದಿ. ಅರ್ಥ ಹೇಳಬೇಕಿಲ್ಲ, ಅಲ್ಲವೇ?</p>
+        <div className="kngrid onb-kn">
+          {[41, 87, 84, 34, 39, 29].map((id) => WORDS.find((w) => w.id === id)).filter(Boolean).map((w, i) => (
+            <div key={w.id} className="kn-cell on pop" style={{ animationDelay: `${i * 0.12}s` }}><b>{w.k}</b><span>ಕನ್ನಡ: {knStem(w.k)}</span></div>
+          ))}
+        </div>
+        <p className="lead">ಆ್ಯಪ್‌ನ ಮೊದಲ {WORDS.length} ಪದಗಳಲ್ಲಿ <b>{WORDS.filter((w) => KN_SHARED.has(w.id)).length}</b> ಪದಗಳು ಕನ್ನಡದಲ್ಲೂ ಬಳಕೆಯಲ್ಲಿವೆ. ಕೊನೆಯ ಅಕ್ಷರ ಮಾತ್ರ ಸ್ವಲ್ಪ ಬೇರೆ.</p>
+        <Btn wide onClick={() => setStep(1)}>ಮುಂದೆ</Btn>
       </>)}
       {step === 1 && (<>
         <h2>ಮೊದಲು ಒಂದು ಪ್ರಾಮಾಣಿಕ ಮಾತು</h2>
@@ -268,18 +302,35 @@ function Home({ api, setTab }) {
   const tick = (i) => api.update((st) => {
     const t = [...(st.challengeTicks[wk] || [false, false, false])]; t[i] = !t[i];
     const n = { ...st, challengeTicks: { ...st.challengeTicks, [wk]: t }, challengeAt: { ...(st.challengeAt || {}), [wk]: Date.now() } };
-    if (t.every(Boolean)) setTimeout(() => api.flash("ಸವಾಲು ಪೂರ್ಣ ✅", { label: "ಹಂಚಿಕೊಳ್ಳಿ", run: () => api.share(shareChallenge(ch, n)) }), 50);
+    if (t.every(Boolean)) setTimeout(() => api.flash("ಸವಾಲು ಪೂರ್ಣ ✅", { label: "ಹಂಚಿಕೊಳ್ಳಿ", run: () => api.share(shareChallenge(ch, n), { tag: "ಸಪ್ತಾಹದ ಸವಾಲು ✅", kan: "ಸವಾಲು ಪೂರ್ಣ", mean: ch }) }), 50);
     return n;
   });
-  const stat = (v, l) => <div className="stat"><b>{v}</b><span>{l}</span></div>;
+  const streak = liveStreak(s), lv = levelOf(s.xp), doneToday = s.lastDay === dayKey();
+  const knAll = words.filter((v) => KN_SHARED.has(v.id)).length;
+  const hour = new Date().getHours();
+  const hello = hour < 12 ? "ಸುಪ್ರಭಾತಮ್" : hour < 17 ? "ನಮಸ್ತೇ" : "ಶುಭಸಾಯಙ್ಕಾಲಃ";
   return (
     <>
       <div className="greet">
-        <h1>ನಮಸ್ತೇ, {s.name} 🙏</h1>
-        <div className="muted">ಇಂದಿನ ಗುರಿ — ಐದು ನಿಮಿಷ</div>
+        <h1>{hello}, {s.name} 🙏</h1>
+        <div className="muted">{doneToday ? "ಇಂದಿನ ಅಭ್ಯಾಸ ಆಗಿದೆ. ಸಾಧು! 🌿" : streak >= 2 ? `ಸರಣಿ ${streak} ದಿನ — ಇಂದಿನ ಐದು ನಿಮಿಷ ಉಳಿದಿದೆ` : "ಇಂದಿನ ಗುರಿ — ಐದು ನಿಮಿಷ"}</div>
       </div>
       <div className="pad">
-        <div className="card stats">{stat(`🔥 ${s.streak}`, "ಸರಣಿ")}{stat(`⭐ ${s.xp}`, "ಅಂಕ")}{stat(`📚 ${s.learned.length}`, "ಪದಗಳು")}{stat(`💬 ${s.sentences.length}`, "ವಾಕ್ಯಗಳು")}</div>
+        <div className="card hero">
+          <Ring pct={(100 * doneN) / items.length} size={86} stroke={9} label={`ಇಂದಿನ ಯೋಜನೆ ${doneN} / ${items.length}`}>
+            <b>{doneN}/{items.length}</b><span>ಇಂದು</span>
+          </Ring>
+          <div className="hero-b">
+            <div className="hero-row">
+              <span className={`flame${doneToday ? " lit" : ""}`} aria-label={`ಸರಣಿ ${streak} ದಿನ`}>🔥 <b>{streak}</b></span>
+              <span className="shield" title="ಸರಣಿ ರಕ್ಷೆ" aria-label={`ಸರಣಿ ರಕ್ಷೆ ${s.shields ?? 1}`}>🛡️ <b>{s.shields ?? 1}</b></span>
+              <span className="xp" aria-label={`ಅಂಕ ${s.xp}`}>⭐ <b>{s.xp}</b></span>
+            </div>
+            <button type="button" className="lvl-chip" onClick={() => setTab("me")}>ಸೋಪಾನ {lv.n} · {lv.t}</button>
+            <div className="bprog" aria-hidden="true"><i style={{ width: `${lv.pct}%` }} /></div>
+          </div>
+        </div>
+        <WeekStrip s={s} />
 
         <div className="card today plan">
           <div className="plan-h"><div className="sec-t">ಅಭ್ಯಾಸಃ — ಇಂದಿನ ಯೋಜನೆ</div><span className="lvl-p">{doneN} / {items.length}</span></div>
@@ -294,10 +345,22 @@ function Home({ api, setTab }) {
             : <Btn wide onClick={items.find((i) => !i.done).go}>{items.find((i) => !i.done).t} →</Btn>}
         </div>
 
-        {w && <ScriptCard item={w} p={s} split={w.split} tip={w.tip} tag="ಶಬ್ದಃ — ಇಂದಿನ ಪದ"
-          onShare={() => api.share(shareWord(w, s))} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />}
+        {s.learned.length < 15 && knAll > 0 && (
+          <button type="button" className="card knhook" onClick={() => api.go({ kind: "known" })}>
+            <span className="knbig">{knAll}<small>/{words.length}</small></span>
+            <span className="lvl-b"><b>ಈ ಸಂಸ್ಕೃತ ಪದಗಳು ನಿಮ್ಮ ಕನ್ನಡದಲ್ಲೂ ಇವೆ!</b><span className="muted small">ಜಲ, ಪುಷ್ಪ, ಸೂರ್ಯ, ಮಿತ್ರ… ನೀವು ಅಂದುಕೊಂಡದ್ದಕ್ಕಿಂತ ಹೆಚ್ಚು ಗೊತ್ತು. ನೋಡಿ →</span></span>
+          </button>
+        )}
+        <InstallCard />
+        <button type="button" className="card speedcard" onClick={() => api.go({ kind: "speed" })} disabled={s.learned.length < 4}>
+          <span className="speed-ic">⚡</span>
+          <span className="lvl-b"><b>60 ಸೆಕೆಂಡ್ ಸವಾಲು</b><span className="muted small">{s.learned.length < 4 ? "ನಾಲ್ಕು ಪದ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ" : s.speedBest ? `ನಿಮ್ಮ ಅತ್ಯುತ್ತಮ: ${s.speedBest} ಪದ` : "ಕಲಿತ ಪದಗಳ ವೇಗದ ಆಟ"}</span></span>
+          <span className="lvl-p">→</span>
+        </button>
+        {w && <ScriptCard item={w} p={s} split={w.split} tip={w.tip} tag="ಶಬ್ದಃ — ಇಂದಿನ ಪದ" kn={KN_SHARED.has(w.id)} pic={WORD_PIC[w.id]}
+          onShare={() => api.share(shareWord(w, s), wordCard(w))} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />}
         {x && <ScriptCard item={x} p={s} tag="ವಾಕ್ಯಮ್ — ಇಂದಿನ ವಾಕ್ಯ"
-          onShare={() => api.share(shareSentence(x, s))} onReport={() => api.report("s", x.id, `ವಾಕ್ಯ: ${x.d}`)} />}
+          onShare={() => api.share(shareSentence(x, s), sentCard(x))} onReport={() => api.report("s", x.id, `ವಾಕ್ಯ: ${x.d}`)} />}
         {u && (
           <div className="card verse">
             <div className="tag">ಸುಭಾಷಿತಮ್ — ಇಂದಿನ ಸುಭಾಷಿತ</div>
@@ -305,7 +368,7 @@ function Home({ api, setTab }) {
             <div className="kan vkan" style={{ fontSize: 18 * f }}>{u.lines.map((l, i) => <div key={i}>{l[1]}</div>)}</div>
             <div className="mean" style={{ fontSize: 16 * f }}>{u.m}</div>
             <div className="card-foot"><span className="src">{u.from}</span><span className="foot-acts">
-              <button type="button" className="link" onClick={() => api.share(shareSubhashita(u, s))}>ಹಂಚಿಕೊಳ್ಳಿ</button>
+              <button type="button" className="link" onClick={() => api.share(shareSubhashita(u, s), subhCard(u))}>ಹಂಚಿಕೊಳ್ಳಿ</button>
               <button type="button" className="link" onClick={() => api.go({ kind: "subhashita", id: u.id })}>ಪದಚ್ಛೇದ</button></span></div>
           </div>
         )}
@@ -325,6 +388,13 @@ function Home({ api, setTab }) {
     </>
   );
 }
+
+// image-card data for the share sheet
+const wordCard = (w) => ({ tag: `ಇಂದಿನ ಪದ · #${pad3(w.id)}`, dev: w.d, kan: w.k, mean: w.m });
+const sentCard = (x) => ({ tag: `ಇಂದಿನ ವಾಕ್ಯ · #${pad3(x.id)}`, dev: x.d, kan: x.k, mean: x.m });
+const subhCard = (u) => ({ tag: `ಸುಭಾಷಿತ · #${pad3(u.id)}`, dev: u.lines.map((l) => l[0]), kan: u.lines.map((l) => l[1]), mean: u.m });
+const lessonCard = (ws) => ({ tag: "ಇಂದು ಕಲಿತ ಪದಗಳು", kan: ws.slice(0, 5).map((w) => `${w.k} — ${w.m.split(",")[0]}`) });
+const badgeCard = (b) => ({ tag: "ಹೊಸ ಸಾಧನೆ 🏅", kan: b.t, mean: b.d });
 
 // today's line in the activity log: new items finished, and whether the day's plan is complete
 function logToday(prev, n) {
@@ -373,18 +443,32 @@ function Learn({ api }) {
     { n: 5, t: "ಹಂತ 5 — ಸುಭಾಷಿತಮ್", d: `${U.length} ಸುಭಾಷಿತಗಳು`, k: "l5", pr: `${s.subhashitas.length} / ${U.length}` },
     { n: 6, t: "ಹಂತ 6 — ವಾಚನಮ್", d: `${R.length} ವಾಚನಗಳು`, k: "l6", pr: `${s.readings.length} / ${R.length}` },
   ];
+  const tot = [null, [s.learned, W], [s.sentences, S], [s.dialogues, D], [s.grammar, G], [s.subhashitas, U], [s.readings, R]];
+  lv.forEach((l, i) => { const t = tot[i]; if (t && t[1].length) l.pc = Math.round((100 * t[1].filter((x) => t[0].includes(x.id)).length) / t[1].length); });
   return (
     <>
       <Header title="ಕಲಿಕೆಯ ಪಥ" sub="ನಿಮ್ಮದೇ ವೇಗದಲ್ಲಿ. ಯಾವಾಗ ಬೇಕಾದರೂ ಸೇರಬಹುದು." />
       <div className="pad path">
+        <button type="button" className="card lvl camp" onClick={() => api.go({ kind: "shibira" })}>
+          <span className="lvl-n">🗣️</span>
+          <span className="lvl-b"><b>ಸಂಭಾಷಣ ಶಿಬಿರ — 10 ದಿನ</b><span className="muted">ದಿನಕ್ಕೆ ಆರು ವಾಕ್ಯ. ಹತ್ತನೇ ದಿನ ನಿಮ್ಮ ಪರಿಚಯ ಸಂಸ್ಕೃತದಲ್ಲಿ.</span>
+            <span className="bprog" aria-hidden="true"><i style={{ width: `${(100 * (s.shibira || []).length) / SHIBIRA.length}%` }} /></span></span>
+          <span className="lvl-p">{(s.shibira || []).length} / {SHIBIRA.length}</span>
+        </button>
         {lv.map((l) => (
           <button type="button" key={l.n} className={`card lvl${l.lock ? " lock" : ""}`} disabled={l.lock}
             onClick={() => api.go({ kind: l.k })}>
             <span className="lvl-n">{l.n}</span>
-            <span className="lvl-b"><b>{l.t}</b><span className="muted">{l.lock ? "ಶೀಘ್ರದಲ್ಲೇ" : l.d}</span></span>
+            <span className="lvl-b"><b>{l.t}</b><span className="muted">{l.lock ? "ಶೀಘ್ರದಲ್ಲೇ" : l.d}</span>
+              {l.pc != null && <span className="bprog" aria-hidden="true"><i style={{ width: `${l.pc}%` }} /></span>}</span>
             {!l.lock && <span className="lvl-p">{l.pr}</span>}
           </button>
         ))}
+        <button type="button" className="card lvl" onClick={() => api.go({ kind: "fests" })}>
+          <span className="lvl-n">🪔</span>
+          <span className="lvl-b"><b>ಹಬ್ಬದ ಪಾಠಗಳು</b><span className="muted">ಶುಭಾಶಯ, ಐದು ಪದ, ಒಂದು ಶ್ಲೋಕ</span></span>
+          <span className="lvl-p">{(s.fest || []).length} / {FESTIVALS.length}</span>
+        </button>
         <div className="card goal"><b>🪷 ಸಂಸ್ಕೃತಸಾಧಕಃ</b><span className="muted">{s.badges.includes("b15") ? "ಪ್ರಯಾಣದ ಗುರಿ ತಲುಪಿದಿರಿ ✓" : `ಪ್ರಯಾಣದ ಗುರಿ — ${stagesDone(s)} / 6 ಹಂತ ಪೂರ್ಣ`}</span></div>
       </div>
     </>
@@ -398,7 +482,7 @@ function Level0({ api }) {
   const [res, setRes] = useState(null);
   const all = [...VOWELS, ...CONSONANTS.flatMap((r) => r.items)];
   const f = FS[s.fontStep];
-  if (res) return <Done api={api} title="ಅಕ್ಷರ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
+  if (res) return <Done api={api} res={res || null} title="ಅಕ್ಷರ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
   if (quiz) return <Quiz qs={quiz} p={s} title="ಅಕ್ಷರ ಅಭ್ಯಾಸ" onBack={() => setQuiz(null)}
     onGrade={() => {}} onFinish={(sc, t) => { api.update((st) => touch({ ...st, l0done: true, xp: st.xp + sc })); setRes({ s: sc, t }); }} />;
   const cell = ([dv, kn], i) => (
@@ -421,7 +505,36 @@ function Level0({ api }) {
         <div className="sec-t">ಗಮನಿಸಬೇಕಾದದ್ದು</div>
         {NOTES.map((n) => <div key={n.t} className="card note"><b>{n.t}</b><p>{n.d}</p></div>)}
         <Btn wide onClick={() => setQuiz(pick(all, 10).map((pr) => letterQ(pr, all)))}>ಅಕ್ಷರ ಅಭ್ಯಾಸ (10 ಪ್ರಶ್ನೆ)</Btn>
+        <Btn wide kind="line" onClick={() => api.go({ kind: "trace" })}>✍️ ದೇವನಾಗರಿ ಬರೆದು ಕಲಿಯಿರಿ</Btn>
         <Btn wide kind="line" onClick={() => { api.update((st) => touch({ ...st, l0done: true })); api.close(); }}>ಮುಗಿಯಿತು</Btn>
+      </div>
+    </>
+  );
+}
+
+/* ── trace a Devanagari letter with a finger ── */
+function TraceView({ api }) {
+  const all = useMemo(() => [...VOWELS, ...CONSONANTS.flatMap((r) => r.items)], []);
+  const [i, setI] = useState(0);
+  const [n, setN] = useState(0);
+  const [dv, kn] = all[i];
+  return (
+    <>
+      <Header title="ದೇವನಾಗರಿ ಬರೆಯಿರಿ" sub={`${i + 1} / ${all.length} · ಕನ್ನಡ: ${kn}`} onBack={api.close} />
+      <div className="pad center">
+        <p className="muted">ಮಸುಕಾಗಿ ಕಾಣುವ ಅಕ್ಷರದ ಮೇಲೆ ಬೆರಳಿನಿಂದ ಬರೆಯಿರಿ.</p>
+        <details className="wb-how"><summary className="small">ಬರೆಯುವ ಕ್ರಮ ಹೇಗೆ?</summary>
+          <ul className="small" style={{ textAlign: "left" }}>
+            <li>ಎಡದಿಂದ ಬಲಕ್ಕೆ, ಮೇಲಿನಿಂದ ಕೆಳಕ್ಕೆ ಬರೆಯಿರಿ.</li>
+            <li>ಮೊದಲು ಅಕ್ಷರದ ಮೈ; ಆಮೇಲೆ ನೇರ ಕಂಬದ ಗೆರೆ.</li>
+            <li>ಮೇಲಿನ ಅಡ್ಡ ಗೆರೆ (ಶಿರೋರೇಖೆ) ಕೊನೆಯಲ್ಲಿ.</li>
+          </ul></details>
+        <Trace key={i} ch={dv} onGood={() => { setN(n + 1); if (n === 0) api.update((st) => touch({ ...st, xp: st.xp + 1 })); else api.update((st) => ({ ...st, xp: st.xp + 1 })); }} />
+        <div className="row two">
+          <Btn kind="line" disabled={i === 0} onClick={() => setI(i - 1)}>← ಹಿಂದಿನದು</Btn>
+          <Btn disabled={i + 1 >= all.length} onClick={() => setI(i + 1)}>ಮುಂದಿನದು →</Btn>
+        </div>
+        {n > 0 && <p className="muted small">ಈ ಬಾರಿ {n} ಅಕ್ಷರ ಚೆನ್ನಾಗಿ ಬರೆದಿರಿ 🌿</p>}
       </div>
     </>
   );
@@ -435,20 +548,39 @@ function Level1({ api }) {
     <>
       <Header title="ಹಂತ 1 — ಪ್ರಥಮಪದಾನಿ" sub="ಘಟಕವನ್ನು ಆರಿಸಿ. ಒಂದು ಪಾಠದಲ್ಲಿ ಐದು ಪದ." onBack={api.close} />
       <div className="pad">
-        {MODULES.map((m) => {
-          const ws = W.filter((w) => w.mod === m.n);
-          if (!ws.length) return null;
-          const done = ws.filter((w) => s.learned.includes(w.id)).length;
-          return (
-            <button type="button" key={m.n} className="card lvl" onClick={() => api.go({ kind: "lesson", mod: m.n })}>
-              <span className="lvl-n">{String(m.n).padStart(2, "0")}</span>
-              <span className="lvl-b"><b>{m.t}</b><span className="muted">{m.s}</span></span>
-              <span className="lvl-p">{done} / {ws.length}</span>
-            </button>
-          );
-        })}
+        <ModulePath api={api} W={W} />
       </div>
     </>
+  );
+}
+
+/* the word modules as a winding path: done 🪷, next ✨, the rest open too (anyone can start anywhere) */
+function ModulePath({ api, W }) {
+  const { s } = api;
+  const mods = MODULES.map((m) => {
+    const ws = W.filter((w) => w.mod === m.n);
+    return { ...m, total: ws.length, done: ws.filter((w) => s.learned.includes(w.id)).length };
+  }).filter((m) => m.total);
+  const next = mods.find((m) => m.done < m.total);
+  const X = [50, 72, 80, 66, 42, 24, 20, 34];
+  return (
+    <div className="mpath">
+      {mods.map((m, i) => {
+        const full = m.done === m.total, cur = next && m.n === next.n, pct = Math.round((100 * m.done) / m.total);
+        return (
+          <div key={m.n} className="mp-row" style={{ "--x": `${X[i % X.length]}%` }}>
+            <button type="button" className={`mp-node${full ? " full" : ""}${cur ? " cur" : ""}`}
+              onClick={() => api.go({ kind: "lesson", mod: m.n })} aria-label={`${m.t} — ${m.s}. ${m.done} / ${m.total}`}>
+              <Ring pct={pct} size={78} stroke={7} label="">
+                <span className="mp-ic">{full ? "🪷" : cur ? "✨" : String(m.n).padStart(2, "0")}</span>
+              </Ring>
+            </button>
+            <div className="mp-lab"><b>{m.t}</b><span>{m.s} · {m.done}/{m.total}</span></div>
+            {cur && <div className="mp-go">ಇಲ್ಲಿಂದ ಮುಂದುವರಿಸಿ</div>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -462,6 +594,7 @@ function Lesson({ api, mod }) {
     return fresh.length ? fresh.slice(0, 5) : pick(W, 5);
   });
   const [isNew] = useState(() => set.some((w) => !s.learned.includes(w.id)));
+  const [xp0] = useState(s.xp);
   const sents = visSents(s);
   const steps = useMemo(() => set.flatMap((w) => {
     const u = usageOf(w, sents);
@@ -483,7 +616,7 @@ function Lesson({ api, mod }) {
     <Done api={api} title="ಅದ್ಭುತಮ್ 🎉" line={isNew
       ? `ಇಂದು ನೀವು ${set.length} ಹೊಸ ಸಂಸ್ಕೃತ ಪದಗಳನ್ನು ಕಲಿತಿರಿ. ಅಭ್ಯಾಸದಲ್ಲಿ ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`
       : `${set.length} ಪದಗಳನ್ನು ಮತ್ತೆ ಅಭ್ಯಾಸ ಮಾಡಿದಿರಿ. ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`}
-      shareText={isNew ? shareLesson(set, s) : null} />
+      shareText={isNew ? shareLesson(set, s) : null} card={lessonCard(set)} res={res} xp0={xp0} />
   );
   if (phase === "quiz") return <Quiz qs={qs} p={s} title="ಅಭ್ಯಾಸ" onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => { setRes({ s: sc, t }); api.plan("w"); }} />;
 
@@ -500,8 +633,9 @@ function Lesson({ api, mod }) {
       <div className="pad">
         <Bar now={i + 1} total={steps.length + 1} />
         {st.t === "learn" ? (<>
-          <ScriptCard item={w} p={s} split={w.split} tip={w.tip} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />
-          <div className="card say"><b>ಹೇಳಿ</b><p>ಕನ್ನಡ ಲಿಪಿಯನ್ನು ನೋಡಿ, ಅಕ್ಷರ ಬಿಡಿಸಿ, ಗಟ್ಟಿಯಾಗಿ ಮೂರು ಬಾರಿ ಹೇಳಿ — <span className="kan-inl">{w.k}</span></p></div>
+          <ScriptCard item={w} p={s} split={w.split} tip={w.tip} kn={KN_SHARED.has(w.id)} pic={WORD_PIC[w.id]} onReport={() => api.report("w", w.id, `ಪದ: ${w.d}`)} />
+          <div className="card say"><b>ಹೇಳಿ</b><p>ಕನ್ನಡ ಲಿಪಿಯನ್ನು ನೋಡಿ, ಅಕ್ಷರ ಬಿಡಿಸಿ, ಗಟ್ಟಿಯಾಗಿ ಮೂರು ಬಾರಿ ಹೇಳಿ — <span className="kan-inl">{w.k}</span></p>
+            <Recorder key={w.id} /></div>
         </>) : (<>
           <div className="sec-t">ಬಳಸು — ಈ ಪದ ವಾಕ್ಯದೊಳಗೆ</div>
           <ScriptCard item={st.u} p={s} tag={`ವಾಕ್ಯ #${pad3(st.u.id)}`} onReport={() => api.report("s", st.u.id, `ವಾಕ್ಯ: ${st.u.d}`)}>
@@ -514,23 +648,62 @@ function Lesson({ api, mod }) {
   );
 }
 
-function Done({ api, title, line, shareText }) {
+function Done({ api, title, line, shareText, card, res, xp0 }) {
   const [offered, setOffered] = useState(!!shareText);
+  const [coach] = useState(() => COACH[Math.floor(Math.random() * COACH.length)]);
+  const { s } = api;
+  const gained = xp0 != null ? Math.max(0, s.xp - xp0) : null;
+  const pct = res && res.t ? Math.round((100 * res.s) / res.t) : null;
+  useEffect(() => { buzz("win"); }, []);
   return (
     <>
+      <Confetti />
       <Header title="ಪೂರ್ಣ" onBack={api.close} />
       <div className="pad done">
+        <div className="done-burst" aria-hidden="true">🪷</div>
         <div className="done-t">{title}</div>
         <p className="lead">{line}</p>
+        <div className="done-stats">
+          {gained != null && <div className="dstat"><b>+{gained}</b><span>ಅಂಕ ⭐</span></div>}
+          {pct != null && <div className="dstat"><b>{pct}%</b><span>ಸರಿ ಉತ್ತರ</span></div>}
+          <div className="dstat"><b>{liveStreak(s)}</b><span>ದಿನದ ಸರಣಿ 🔥</span></div>
+        </div>
+        <p className="coach">💬 {coach}</p>
         {offered && (
           <div className="card">
             <p>ಕಲಿತದ್ದನ್ನು ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳುವಿರಾ? ಬೇಡವಾದರೆ ಬಿಟ್ಟುಬಿಡಿ.</p>
-            <Btn wide kind="line" onClick={() => { setOffered(false); api.share(shareText); }}>ಹಂಚಿಕೊಳ್ಳಿ</Btn>
+            <Btn wide kind="line" onClick={() => { setOffered(false); api.share(shareText, card); }}>ಹಂಚಿಕೊಳ್ಳಿ</Btn>
           </div>
         )}
-        <Btn wide onClick={api.close}>ಮನೆಗೆ</Btn>
+        <Btn wide onClick={api.close}>ಮುಂದುವರಿಸಿ</Btn>
       </div>
     </>
+  );
+}
+
+/* streak milestone — full screen, once */
+const MS_LINE = { 3: "ಮೂರು ದಿನ! ಅಭ್ಯಾಸ ಬೇರು ಬಿಡುತ್ತಿದೆ.", 7: "ಒಂದು ಪೂರ್ತಿ ವಾರ! ಇದು ನಿಮ್ಮ ದಿನಚರಿಯ ಭಾಗವಾಗುತ್ತಿದೆ.", 21: "ಇಪ್ಪತ್ತೊಂದು ದಿನ! ಇದು ಈಗ ನಿಮ್ಮ ಸಾಧನೆ.", 40: "ನಲವತ್ತು ದಿನ — ಒಂದು ಮಂಡಲದ ಅವಧಿ ಪೂರ್ಣ!", 108: "ನೂರೆಂಟು ದಿನ! ಮಂಡಲಕ್ಕೆ ನೀವೇ ಸ್ಫೂರ್ತಿ." };
+function Milestone({ n, s, close, share }) {
+  useEffect(() => { buzz("win"); }, []);
+  useEffect(() => { const k = (e) => e.key === "Escape" && close(); addEventListener("keydown", k); return () => removeEventListener("keydown", k); }, []);
+  return (
+    <div className="celeb" role="dialog" aria-modal="true" aria-label={`ಸತತ ${n} ದಿನ`}>
+      <Confetti n={110} />
+      <div className="celeb-in">
+        <div className="celeb-fire" aria-hidden="true">🔥</div>
+        <div className="celeb-n">{n}</div>
+        <div className="celeb-t">ದಿನಗಳ ಸರಣಿ</div>
+        <p className="lead">{MS_LINE[n]}</p>
+        <div className="celeb-verse">
+          {s.showDeva && <div className="dev">अभ्यासेन सिद्धिः</div>}
+          <div className="kan">ಅಭ್ಯಾಸೇನ ಸಿದ್ಧಿಃ</div>
+          <div className="small">ಅಭ್ಯಾಸದಿಂದ ಸಿದ್ಧಿ</div>
+        </div>
+        {n === 7 && <p className="small">🛡️ ಹೊಸ ಸರಣಿ ರಕ್ಷೆ ಸಿಕ್ಕಿದೆ — ಒಂದು ದಿನ ತಪ್ಪಿದರೂ ಸರಣಿ ಉಳಿಯುತ್ತದೆ.</p>}
+        <Btn wide onClick={share}>ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಿ</Btn>
+        <Btn wide kind="ghost" onClick={close}>ಮುಂದುವರಿಸಿ</Btn>
+      </div>
+    </div>
   );
 }
 
@@ -567,7 +740,7 @@ function Level2({ api }) {
                       <Parts parts={x.parts} p={s} />
                       <div className="row">
                         {!done && <Btn small onClick={() => mark(x)}>ಕಲಿತೆ</Btn>}
-                        <Btn small kind="line" onClick={() => api.share(shareSentence(x, s))}>ಹಂಚಿಕೊಳ್ಳಿ</Btn>
+                        <Btn small kind="line" onClick={() => api.share(shareSentence(x, s), sentCard(x))}>ಹಂಚಿಕೊಳ್ಳಿ</Btn>
                       </div>
                       <div className="card-foot"><SrcLine item={x} /><button type="button" className="link warn" onClick={() => api.report("s", x.id, `ವಾಕ್ಯ: ${x.d}`)}>ತಪ್ಪು ತಿಳಿಸಿ</button></div>
                     </>)}
@@ -590,7 +763,7 @@ function SentenceQuiz({ api }) {
     const mine = S.filter((x) => s.sentences.includes(x.id) && alignable(x) && x.parts.length >= 2);
     return pick(mine, 8).map((x, i) => sentQ(x, S, i));
   }, []);
-  if (res || !qs.length) return <Done api={api} title="ವಾಕ್ಯ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={res ? `${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.` : "ಮೊದಲು ಕೆಲವು ವಾಕ್ಯಗಳನ್ನು ಕಲಿಯಿರಿ."} />;
+  if (res || !qs.length) return <Done api={api} res={res || null} title="ವಾಕ್ಯ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={res ? `${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.` : "ಮೊದಲು ಕೆಲವು ವಾಕ್ಯಗಳನ್ನು ಕಲಿಯಿರಿ."} />;
   return <Quiz qs={qs} p={s} title="ವಾಕ್ಯ ಅಭ್ಯಾಸ" onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => setRes({ s: sc, t })} />;
 }
 
@@ -620,7 +793,7 @@ function Dialogue({ api, id }) {
   const [quiz, setQuiz] = useState(null);
   const [res, setRes] = useState(null);
   const f = FS[s.fontStep];
-  if (res) return <Done api={api} title="ಸಂವಾದ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
+  if (res) return <Done api={api} res={res || null} title="ಸಂವಾದ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
   if (quiz) return <Quiz qs={quiz} p={s} title="ಸಂವಾದ ಅಭ್ಯಾಸ" onBack={() => setQuiz(null)} onGrade={() => {}}
     onFinish={(sc, t) => { api.update((st) => touch({ ...st, xp: st.xp + sc })); setRes({ s: sc, t }); }} />;
   const done = s.dialogues.includes(d.id);
@@ -672,7 +845,7 @@ function GrammarLesson({ api, id }) {
   const [res, setRes] = useState(null);
   const f = FS[s.fontStep];
   if (!g) return <><Header title="ವ್ಯಾಕರಣ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ಪಾಠ ಸಿಗಲಿಲ್ಲ.</p></div></>;
-  if (res) return <Done api={api} title="ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
+  if (res) return <Done api={api} res={res || null} title="ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
   if (quiz) return <Quiz qs={quiz} p={s} title={g.t} onBack={() => setQuiz(null)} onGrade={() => {}}
     onFinish={(sc, t) => { api.update((st) => touch(seedSrs({ ...st, grammar: st.grammar.includes(g.id) ? st.grammar : [...st.grammar, g.id], xp: st.xp + sc + 5 }, "g" + g.id))); setRes({ s: sc, t }); }} />;
   const done = s.grammar.includes(g.id);
@@ -744,7 +917,7 @@ function Subhashita({ api, id }) {
           <div className="kan vkan" style={{ fontSize: 20 * f }}>{v.lines.map((l, i) => <div key={i}>{l[1]}</div>)}</div>
           <div className="mean" style={{ fontSize: 17 * f }}>{v.m}</div>
           <div className="card-foot"><SrcLine item={v} /><span className="foot-acts">
-            <button type="button" className="link" onClick={() => api.share(shareSubhashita(v, s))}>ಹಂಚಿಕೊಳ್ಳಿ</button>
+            <button type="button" className="link" onClick={() => api.share(shareSubhashita(v, s), subhCard(v))}>ಹಂಚಿಕೊಳ್ಳಿ</button>
             <button type="button" className="link warn" onClick={() => api.report("u", v.id, `ಸುಭಾಷಿತ: ${v.lines[0][0]}`)}>ತಪ್ಪು ತಿಳಿಸಿ</button></span></div>
         </div>
         <div className="card say"><b>ಹೇಳಿ</b><p>ಪ್ರತಿ ಸಾಲನ್ನು ಗಟ್ಟಿಯಾಗಿ ಎರಡು ಬಾರಿ ಹೇಳಿ. ನಂತರ ಅರ್ಥವನ್ನು ನಿಮ್ಮ ಮಾತಿನಲ್ಲಿ ಹೇಳಿ.</p></div>
@@ -769,7 +942,7 @@ function SubhashitaQuiz({ api }) {
     const mine = U.filter((v) => s.subhashitas.includes(v.id));
     return shuffle(pick(mine, 6).flatMap((v, i) => [subhFillQ(v, U, s.showDeva), ...(i < 3 ? [gistQ(v, U)] : [])]));
   }, []);
-  if (res || !qs.length) return <Done api={api} title="ಸುಭಾಷಿತ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={res ? `${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.` : "ಮೊದಲು ಕೆಲವು ಸುಭಾಷಿತ ಕಲಿಯಿರಿ."} />;
+  if (res || !qs.length) return <Done api={api} res={res || null} title="ಸುಭಾಷಿತ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={res ? `${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.` : "ಮೊದಲು ಕೆಲವು ಸುಭಾಷಿತ ಕಲಿಯಿರಿ."} />;
   return <Quiz qs={qs} p={s} title="ಸುಭಾಷಿತ ಅಭ್ಯಾಸ" onBack={api.close} onGrade={() => {}}
     onFinish={(sc, t) => { api.update((st) => touch({ ...st, xp: st.xp + sc })); setRes({ s: sc, t }); }} />;
 }
@@ -790,7 +963,7 @@ function GrammarQuiz({ api }) {
     }
     return out;
   }, []);
-  if (res || !qs.length) return <Done api={api} title="ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={res ? `${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ. ತಪ್ಪಾದವು ತಪ್ಪುಗಳ ಪುಸ್ತಕದಲ್ಲಿ ಸೇರಿವೆ.` : "ಮೊದಲು ಒಂದು ವ್ಯಾಕರಣ ಪಾಠ ಮುಗಿಸಿ."} />;
+  if (res || !qs.length) return <Done api={api} res={res || null} title="ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ ಪೂರ್ಣ" line={res ? `${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ. ತಪ್ಪಾದವು ತಪ್ಪುಗಳ ಪುಸ್ತಕದಲ್ಲಿ ಸೇರಿವೆ.` : "ಮೊದಲು ಒಂದು ವ್ಯಾಕರಣ ಪಾಠ ಮುಗಿಸಿ."} />;
   return <Quiz qs={qs} p={s} title="ವ್ಯಾಕರಣ ಅಭ್ಯಾಸ" onBack={api.close} onGrade={api.grade}
     onFinish={(sc, t) => { api.update((st) => touch({ ...st, xp: st.xp + sc })); setRes({ s: sc, t }); }} />;
 }
@@ -824,7 +997,7 @@ function Reading({ api, id }) {
   const [res, setRes] = useState(null);
   const f = FS[s.fontStep];
   if (!r) return <><Header title="ವಾಚನ" onBack={api.close} /><div className="pad"><p className="lead">ಈ ವಾಚನ ಸಿಗಲಿಲ್ಲ.</p></div></>;
-  if (res) return <Done api={api} title="ವಾಚನ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
+  if (res) return <Done api={api} res={res || null} title="ವಾಚನ ಪೂರ್ಣ" line={`${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ.`} />;
   if (quiz) return <Quiz qs={quiz} p={s} title={r.t} onBack={() => setQuiz(null)} onGrade={() => {}}
     onFinish={(sc, t) => { api.update((st) => touch(seedSrs({ ...st, readings: st.readings.includes(r.id) ? st.readings : [...st.readings, r.id], xp: st.xp + sc + 5 }, "r" + r.id))); setRes({ s: sc, t }); }} />;
   const done = s.readings.includes(r.id);
@@ -859,6 +1032,244 @@ function Reading({ api, id }) {
   );
 }
 
+/* ═══════════════════ ಸಂಭಾಷಣ ಶಿಬಿರ (10 days) ═══════════════════ */
+const okItem = (x) => x.status !== "WITHDRAWN";
+const lineItem = (l) => ({ d: l[0], k: l[1], m: l[2] });
+function ShibiraList({ api }) {
+  const { s } = api;
+  const done = s.shibira || [];
+  const days = SHIBIRA.filter(okItem);
+  const next = days.find((d) => !done.includes(d.id));
+  return (
+    <>
+      <Header title="ಸಂಭಾಷಣ ಶಿಬಿರ" sub="10 ದಿನ · ದಿನಕ್ಕೆ ಸುಮಾರು 10 ನಿಮಿಷ" onBack={api.close} />
+      <div className="pad">
+        <p className="lead">ಓದುವುದಕ್ಕಿಂತ ಹೇಳುವುದು ಮುಖ್ಯ. ಪ್ರತಿ ವಾಕ್ಯವನ್ನು ಗಟ್ಟಿಯಾಗಿ ಹೇಳಿ. ಮನೆಯವರೊಂದಿಗೆ ಬಳಸಿ ನೋಡಿ.</p>
+        {days.map((d) => {
+          const on = done.includes(d.id), cur = next && next.id === d.id;
+          return (
+            <button type="button" key={d.id} className={`card lvl${cur ? " curday" : ""}`} onClick={() => api.go({ kind: "shibiraDay", id: d.id })}>
+              <span className="lvl-n">{on ? "✓" : d.id}</span>
+              <span className="lvl-b"><b>ದಿನ {d.id} — {d.t}</b><span className="muted">{d.s}</span></span>
+              {cur && <span className="lvl-p">ಇಂದು →</span>}
+            </button>
+          );
+        })}
+        <p className="muted small">ಈ ವಾಕ್ಯಗಳು ಇನ್ನೂ ವಿದ್ವಾಂಸರ ಪರಿಶೀಲನೆಯಲ್ಲಿವೆ. ತಪ್ಪು ಕಂಡರೆ ಮಂಡಲದಲ್ಲಿ ತಿಳಿಸಿ 🙏</p>
+      </div>
+    </>
+  );
+}
+function ShibiraDay({ api, id }) {
+  const { s } = api;
+  const day = SHIBIRA.find((d) => d.id === id);
+  const [i, setI] = useState(0);
+  const [phase, setPhase] = useState("learn");
+  const [res, setRes] = useState(null);
+  const [xp0] = useState(s.xp);
+  const qs = useMemo(() => {
+    const all = SHIBIRA.filter(okItem).flatMap((d) => d.lines);
+    return shuffle(day.lines).slice(0, 5).map((l, n) => {
+      const others = shuffle(all.filter((o) => o[2] !== l[2] && o[1] !== l[1])).slice(0, 3);
+      return n % 2
+        ? { type: "mcq", small: true, ask: "ಸಂಸ್ಕೃತದಲ್ಲಿ ಇದನ್ನು ಹೇಗೆ ಹೇಳುತ್ತೀರಿ?", prompt: l[2], answer: l[1], options: shuffle([l[1], ...others.map((o) => o[1])]), why: `${l[1]} = ${l[2]}` }
+        : { type: "mcq", small: true, ask: "ಇದರ ಅರ್ಥವೇನು?", prompt: l[1], promptDev: s.showDeva ? l[0] : null, answer: l[2], options: shuffle([l[2], ...others.map((o) => o[2])]), why: `${l[1]} = ${l[2]}` };
+    });
+  }, [id]);
+  useEffect(() => { window.scrollTo(0, 0); }, [i, phase]);
+  if (!day) return null;
+  const last = id === SHIBIRA[SHIBIRA.length - 1].id;
+  if (res) return (
+    <Done api={api} title={last ? "ಶಿಬಿರ ಪೂರ್ಣ 🎉" : `ದಿನ ${id} ಪೂರ್ಣ 🌿`} res={res} xp0={xp0}
+      line={last ? "ಹತ್ತು ದಿನ ಮುಗಿಸಿದಿರಿ. ಈಗ ನಿಮ್ಮ ಪರಿಚಯವನ್ನು ಸಂಸ್ಕೃತದಲ್ಲಿ ಹೇಳಬಲ್ಲಿರಿ. ಹೆಸರು ಮತ್ತು ಊರನ್ನು ನಿಮ್ಮದಾಗಿಸಿ ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಿ." : "ಇಂದಿನ ವಾಕ್ಯಗಳನ್ನು ಮನೆಯಲ್ಲಿ ಒಮ್ಮೆ ಬಳಸಿ ನೋಡಿ. ನಾಳೆ ಮುಂದಿನ ದಿನ."}
+      shareText={last ? shareIntro(day.lines, s) : null} card={last ? { tag: "ಸಂಭಾಷಣ ಶಿಬಿರ ಪೂರ್ಣ", kan: day.lines.slice(0, 5).map((l) => l[1]) } : null} />
+  );
+  if (phase === "quiz") return <Quiz qs={qs} p={s} title={`ದಿನ ${id} — ಅಭ್ಯಾಸ`} onBack={api.close} onGrade={() => {}}
+    onFinish={(sc, t) => { api.update((st) => touch({ ...st, xp: st.xp + sc * 2 + ((st.shibira || []).includes(id) ? 0 : 10), shibira: (st.shibira || []).includes(id) ? st.shibira : [...(st.shibira || []), id] })); setRes({ s: sc, t }); }} />;
+  const l = day.lines[i];
+  return (
+    <>
+      <Header title={`ದಿನ ${id} — ${day.t}`} sub={`${day.s} · ${i + 1} / ${day.lines.length}`} onBack={api.close} />
+      <div className="pad">
+        <Bar now={i + 1} total={day.lines.length + 1} />
+        <ScriptCard item={{ ...lineItem(l), status: day.status }} p={s} onReport={() => api.report("h", id, `ಶಿಬಿರ ದಿನ ${id}: ${l[0]}`)} />
+        <div className="card say"><b>ಹೇಳಿ</b><p>ಗಟ್ಟಿಯಾಗಿ ಮೂರು ಬಾರಿ ಹೇಳಿ. ಯಾರೊಂದಿಗಾದರೂ ಮಾತನಾಡುತ್ತಿರುವಂತೆ ಹೇಳಿ.</p><Recorder key={i} /></div>
+        <div className="row two">
+          {i > 0 && <Btn kind="line" onClick={() => setI(i - 1)}>ಹಿಂದೆ</Btn>}
+          <Btn onClick={() => (i + 1 < day.lines.length ? setI(i + 1) : setPhase("quiz"))}>{i + 1 < day.lines.length ? "ಮುಂದೆ" : "ಅಭ್ಯಾಸಕ್ಕೆ"}</Btn>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════ ಹಬ್ಬದ ಪಾಠಗಳು ═══════════════════ */
+function FestList({ api }) {
+  const { s } = api;
+  return (
+    <>
+      <Header title="ಹಬ್ಬದ ಪಾಠಗಳು" sub="ಹಬ್ಬದ ದಿನ ಸಂಸ್ಕೃತದಲ್ಲಿ ಶುಭಾಶಯ ಹೇಳಿ" onBack={api.close} />
+      <div className="pad">
+        {FESTIVALS.filter(okItem).map((f) => (
+          <button type="button" key={f.id} className="card lvl" onClick={() => api.go({ kind: "fest", id: f.id })}>
+            <span className="lvl-n">{(s.fest || []).includes(f.id) ? "✓" : f.ic}</span>
+            <span className="lvl-b"><b>{f.t}</b><span className="muted">{f.greet[1]}</span></span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+function Fest({ api, id }) {
+  const { s } = api;
+  const f0 = FESTIVALS.find((x) => x.id === id), f = FS[s.fontStep];
+  if (!f0) return null;
+  const done = (s.fest || []).includes(id);
+  const finish = () => { api.update((st) => touch((st.fest || []).includes(id) ? st : { ...st, fest: [...(st.fest || []), id], xp: st.xp + 10 })); api.flash("ಹಬ್ಬದ ಪಾಠ ಪೂರ್ಣ 🌿"); };
+  const card = { tag: `${f0.t} ${f0.ic}`, dev: f0.greet[0], kan: f0.greet[1], mean: f0.greet[2] };
+  return (
+    <>
+      <Header title={`${f0.ic} ${f0.t}`} sub="ಶುಭಾಶಯ · ಪದಗಳು · ಶ್ಲೋಕ" onBack={api.close} />
+      <div className="pad">
+        <ScriptCard item={{ d: f0.greet[0], k: f0.greet[1], m: f0.greet[2], status: f0.status }} p={s} tag="ಶುಭಾಶಯ"
+          onShare={() => api.share(shareFest(f0, s), card)} onReport={() => api.report("f", id, `ಹಬ್ಬ: ${f0.t}`)} />
+        <div className="sec-t">ಐದು ಪದಗಳು</div>
+        <div className="card gtable">
+          {f0.words.map((w, i) => (
+            <div key={i} className="grow">
+              {s.showDeva && <span className="dev" style={{ fontSize: 20 * f }}>{w[0]}</span>}
+              <span className="kan" style={{ fontSize: 19 * f }}>{w[1]} <Speak text={w[1]} small /></span>
+              <span>{w[2]}</span>
+            </div>
+          ))}
+        </div>
+        <div className="card verse">
+          <div className="tag">ಶ್ಲೋಕ</div>
+          {s.showDeva && <div className="dev vdev" style={{ fontSize: 19 * f }}>{f0.verse.map((l, i) => <div key={i}>{l[0]}</div>)}</div>}
+          <div className="kan vkan" style={{ fontSize: 18 * f }}>{f0.verse.map((l, i) => <div key={i}>{l[1]}</div>)}</div>
+          <div className="mean" style={{ fontSize: 16 * f }}>{f0.m}</div>
+          <div className="card-foot"><span className="src">{f0.from} · ಪರಿಶೀಲನೆ ಬಾಕಿ</span></div>
+        </div>
+        <Btn wide onClick={() => api.share(shareFest(f0, s), card)}>ಶುಭಾಶಯ ಹಂಚಿಕೊಳ್ಳಿ</Btn>
+        {!done && <Btn wide kind="line" onClick={finish}>ಓದಿದೆ, ಹೇಳಿದೆ ✓</Btn>}
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════ 60-second game ═══════════════════ */
+// learned words only; quick picks, no SRS grading (guessing at speed shouldn't change review dates)
+function Speed({ api }) {
+  const { s } = api;
+  const pool = useMemo(() => visWords(s).filter((w) => s.learned.includes(w.id)), []);
+  const [phase, setPhase] = useState("ready"); // ready | play | end
+  const [left, setLeft] = useState(60);
+  const [score, setScore] = useState(0);
+  const [miss, setMiss] = useState(0);
+  const [q, setQ] = useState(null);
+  const [fb, setFb] = useState(null);
+  const best0 = useRef(s.speedBest || 0);
+  const mk = () => {
+    const w = pick(pool, 1)[0];
+    return { w, opts: shuffle([w, ...distinct(visWords(s).filter((v) => v.id !== w.id && !clash(v, w)), 3)]) };
+  };
+  useEffect(() => {
+    if (phase !== "play") return;
+    const t = setInterval(() => setLeft((x) => (x <= 1 ? (clearInterval(t), 0) : x - 1)), 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+  useEffect(() => {
+    if (phase === "play" && left === 0) {
+      setPhase("end");
+      api.update((st) => touch({ ...st, xp: st.xp + score, speedBest: Math.max(st.speedBest || 0, score) }));
+      buzz("win");
+    }
+  }, [left, phase]);
+  const start = () => { setScore(0); setMiss(0); setLeft(60); setQ(mk()); setPhase("play"); };
+  const answer = (o) => {
+    if (fb) return;
+    const ok = o.id === q.w.id;
+    buzz(ok ? "ok" : "bad");
+    if (ok) setScore((x) => x + 1); else setMiss((x) => x + 1);
+    setFb({ id: o.id, ok });
+    setTimeout(() => { setFb(null); setQ(mk()); }, ok ? 220 : 650);
+  };
+  if (pool.length < 4) return <><Header title="60 ಸೆಕೆಂಡ್ ಸವಾಲು" onBack={api.close} /><div className="pad"><p className="lead">ಮೊದಲು ಕನಿಷ್ಠ ನಾಲ್ಕು ಪದ ಕಲಿಯಿರಿ 🌱</p></div></>;
+  if (phase === "ready") return (
+    <>
+      <Header title="60 ಸೆಕೆಂಡ್ ಸವಾಲು" sub="ಕಲಿತ ಪದಗಳ ವೇಗದ ಆಟ" onBack={api.close} />
+      <div className="pad center">
+        <div className="speed-big">⚡</div>
+        <p className="lead">ಸಂಸ್ಕೃತ ಪದ ಕಾಣುತ್ತದೆ. ಅದರ ಅರ್ಥವನ್ನು ಬೇಗ ಒತ್ತಿ. 60 ಸೆಕೆಂಡಿನಲ್ಲಿ ಎಷ್ಟು?</p>
+        {best0.current > 0 && <p className="muted">ನಿಮ್ಮ ಅತ್ಯುತ್ತಮ: <b>{best0.current}</b></p>}
+        <Btn wide onClick={start}>ಆರಂಭ</Btn>
+      </div>
+    </>
+  );
+  if (phase === "end") {
+    const rec = score > best0.current;
+    return (
+      <>
+        {rec && <Confetti />}
+        <Header title="60 ಸೆಕೆಂಡ್ ಸವಾಲು" onBack={api.close} />
+        <div className="pad done">
+          <div className="done-t">{score} ಪದ ⚡</div>
+          <p className="lead">{rec ? "ಹೊಸ ದಾಖಲೆ! 🎉" : best0.current ? `ನಿಮ್ಮ ಅತ್ಯುತ್ತಮ: ${best0.current}` : ""}{miss ? ` · ${miss} ತಪ್ಪು` : ""}</p>
+          <p className="muted small">ಪ್ರತಿ ಸರಿ ಉತ್ತರಕ್ಕೆ ಒಂದು ಅಂಕ ⭐</p>
+          <Btn wide onClick={start}>ಮತ್ತೊಮ್ಮೆ</Btn>
+          <Btn wide kind="line" onClick={() => api.share(shareSpeed(score, s), { tag: "60 ಸೆಕೆಂಡ್ ಸವಾಲು ⚡", kan: `${score} ಪದ`, mean: "ನೀವೂ ಪ್ರಯತ್ನಿಸಿ!" })}>ಹಂಚಿಕೊಳ್ಳಿ</Btn>
+          <Btn wide kind="ghost" onClick={api.close}>ಮನೆಗೆ</Btn>
+        </div>
+      </>
+    );
+  }
+  const f = FS[s.fontStep];
+  return (
+    <>
+      <Header title={`⚡ ${score}`} sub="ಅರ್ಥ ಆರಿಸಿ" onBack={api.close} />
+      <div className="pad">
+        <div className="timer"><i style={{ width: `${(100 * left) / 60}%` }} className={left <= 10 ? "low" : ""} /><span>{left}</span></div>
+        <div className={`card qcard speed-q${fb ? (fb.ok ? " good" : " bad") : ""}`}>
+          {s.showDeva && <div className="dev" style={{ fontSize: 30 * f }}>{q.w.d}</div>}
+          <div className="q-prompt" style={{ fontSize: 30 * f }}>{q.w.k}</div>
+        </div>
+        <div className="speed-opts">
+          {q.opts.map((o) => (
+            <button type="button" key={o.id} className={`opt${fb && o.id === q.w.id ? " right" : fb && fb.id === o.id && !fb.ok ? " wrong" : ""}`} onClick={() => answer(o)}>{o.m}</button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ಜಲಮ್ → ಜಲ, ದೀಪಃ → ದೀಪ: the Sanskrit ending dropped, as Kannada usually says it
+const knStem = (k) => k.replace(/(ಮ್|ಃ)$/u, "");
+
+/* words that Kannada already uses — the "you know more than you think" list */
+function Known({ api }) {
+  const { s } = api;
+  const ws = visWords(s).filter((w) => KN_SHARED.has(w.id));
+  const all = visWords(s).length;
+  return (
+    <>
+      <Header title="ನಿಮಗೆ ಈಗಾಗಲೇ ಗೊತ್ತು" sub={`${all} ಪದಗಳಲ್ಲಿ ${ws.length} ಕನ್ನಡದಲ್ಲೂ ಬಳಕೆಯಲ್ಲಿವೆ`} onBack={api.close} />
+      <div className="pad">
+        <p className="lead">ಕನ್ನಡ ಮಾತನಾಡುವ ನಿಮಗೆ ಸಂಸ್ಕೃತ ಹೊಸದಲ್ಲ. ಈ ಪದಗಳು (ಅಥವಾ ಅವುಗಳ ಹತ್ತಿರದ ರೂಪ) ನೀವು ದಿನವೂ ಬಳಸುವ ಕನ್ನಡದಲ್ಲೇ ಇವೆ. ಕೊನೆಯ ಅಕ್ಷರ ಮಾತ್ರ ಸ್ವಲ್ಪ ಬೇರೆ — ಜಲ → ಜಲಮ್, ದೀಪ → ದೀಪಃ.</p>
+        <div className="kngrid">
+          {ws.map((w) => (
+            <div key={w.id} className={`kn-cell${s.learned.includes(w.id) ? " on" : ""}`}>
+              <b>{w.k}</b><span>≈ {knStem(w.k)} · {w.m.split(",")[0]}</span>
+            </div>
+          ))}
+        </div>
+        <p className="muted small">ಪಟ್ಟಿ ಇನ್ನೂ ಪರಿಶೀಲನೆಯಲ್ಲಿದೆ. ತಪ್ಪು ಕಂಡರೆ ಮಂಡಲದಲ್ಲಿ ತಿಳಿಸಿ 🙏</p>
+        <Btn wide onClick={() => api.go({ kind: "lesson" })}>ಮೊದಲ ಪಾಠ ಆರಂಭಿಸಿ</Btn>
+      </div>
+    </>
+  );
+}
+
 /* ═══════════════════ practice ═══════════════════ */
 function Practice({ api }) {
   const { s } = api;
@@ -877,6 +1288,7 @@ function Practice({ api }) {
         <Btn wide disabled={!due.length} onClick={() => api.go({ kind: "review" })}>ಇಂದಿನ ಪುನರಾವರ್ತನೆ ({due.length})</Btn>
         {!due.length && <p className="muted center">ಇಂದು ಪುನರಾವರ್ತಿಸಲು ಏನೂ ಇಲ್ಲ. ಹೊಸ ಪಾಠ ಆರಂಭಿಸಿ 🌿</p>}
         {[
+          [s.learned.length < 4, "speed", `⚡ 60 ಸೆಕೆಂಡ್ ಸವಾಲು${s.speedBest ? ` (ಅತ್ಯುತ್ತಮ ${s.speedBest})` : ""}`, "ನಾಲ್ಕು ಪದ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ"],
           [!sentOk, "squiz", "ವಾಕ್ಯ ಅಭ್ಯಾಸ", "ಹಂತ 2 ರಲ್ಲಿ ವಾಕ್ಯ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ"],
           [!s.learned.length, "flash", "ಫ್ಲ್ಯಾಶ್ ಕಾರ್ಡ್", "ಮೊದಲ ಪದ ಕಲಿತ ಮೇಲೆ ತೆರೆಯುತ್ತದೆ"],
           [!s.mistakes.length, "mistakes", `ತಪ್ಪುಗಳ ಪುಸ್ತಕ (${s.mistakes.length})`, "ತಪ್ಪಾದ ಉತ್ತರಗಳು ಇಲ್ಲಿ ಸೇರುತ್ತವೆ — ಸದ್ಯ ಯಾವುದೂ ಇಲ್ಲ"],
@@ -915,7 +1327,7 @@ function Review({ api, mistakes }) {
   }, []);
   const title = mistakes ? "ತಪ್ಪುಗಳ ಪುಸ್ತಕ" : "ಪುನರಾವರ್ತನೆ";
   if (!qs.length) return <><Header title={title} onBack={api.close} /><div className="pad"><p className="lead">ಇಂದು ಪುನರಾವರ್ತಿಸಲು ಏನೂ ಇಲ್ಲ. ಹೊಸ ಪಾಠ ಆರಂಭಿಸಿ 🌿</p><Btn wide onClick={api.close}>ಹಿಂದೆ</Btn></div></>;
-  if (res) return <Done api={api} title="ಸಾಧು 🌿" line={`${title} ಪೂರ್ಣ — ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ. ತಪ್ಪಾದವು ತಪ್ಪುಗಳ ಪುಸ್ತಕದಲ್ಲಿ ಸೇರಿವೆ. ಮತ್ತೆ ಬರುತ್ತವೆ.`} />;
+  if (res) return <Done api={api} res={res || null} title="ಸಾಧು 🌿" line={`${title} ಪೂರ್ಣ — ${res.t} ರಲ್ಲಿ ${res.s} ಸರಿ. ತಪ್ಪಾದವು ತಪ್ಪುಗಳ ಪುಸ್ತಕದಲ್ಲಿ ಸೇರಿವೆ. ಮತ್ತೆ ಬರುತ್ತವೆ.`} />;
   return <Quiz qs={qs} p={s} title={title} onBack={api.close} onGrade={api.grade} onFinish={(sc, t) => { setRes({ s: sc, t }); if (!mistakes) api.plan("r"); }} />;
 }
 
@@ -934,6 +1346,7 @@ function Flash({ api }) {
       <div className="pad">
         <Bar now={i + 1} total={deck.length} />
         <button type="button" className="card flash" onClick={() => setFlip(!flip)} aria-label="ಅರ್ಥ ನೋಡಲು ಒತ್ತಿ">
+          {flip && WORD_PIC[w.id] && <span className="wpic" aria-hidden="true">{WORD_PIC[w.id]}</span>}
           {s.showDeva && <span className="dev" style={{ fontSize: 34 * f }}>{w.d}</span>}
           <span className="kan" style={{ fontSize: 30 * f }}>{w.k}</span>
           {flip ? <span className="mean big">{w.m}</span> : <span className="muted">ಅರ್ಥ ನೋಡಲು ಒತ್ತಿ</span>}
@@ -1074,6 +1487,7 @@ function WeekBoard({ api, setTab }) {
         <p className="muted small">ನಿಮ್ಮ ಹೆಸರು ಪಟ್ಟಿಯಲ್ಲಿ ಕಾಣಬೇಕಾದರೆ "ನಾನು" ಪರದೆಯ ಕ್ಲೌಡ್ ಉಳಿಕೆಯಲ್ಲಿ ಒಪ್ಪಿಗೆಯ ಗುರುತು ಹಾಕಿ.</p>
       )}
 
+      {shown?.circle && <CircleGoal c={shown.circle} cur={which === "cur"} />}
       {off ? <p className="muted small">ಇಂಟರ್ನೆಟ್ ಬಂದಾಗ ಪಟ್ಟಿ ಕಾಣುತ್ತದೆ.</p>
         : !shown ? <p className="muted small">ಪಟ್ಟಿ ತರಲಾಗುತ್ತಿದೆ…</p>
         : !shown.top.length ? <p className="muted small">{which === "cur" ? "ಈ ವಾರದ ಪಟ್ಟಿ ಇನ್ನೂ ಖಾಲಿ." : "ಕಳೆದ ವಾರದ ಪಟ್ಟಿ ಖಾಲಿ."}</p>
@@ -1100,6 +1514,20 @@ function WeekBoard({ api, setTab }) {
         </ul>
         <p className="muted small">ವಾರಕ್ಕೆ ಗರಿಷ್ಠ {WEEK_MAX}. ವಾರ ಸೋಮವಾರದಿಂದ ಭಾನುವಾರ. ದಿನವೂ ಸ್ವಲ್ಪ ಕಲಿಯುವುದೇ ಮುಖ್ಯ.</p>
       </details>
+    </div>
+  );
+}
+
+/* the whole circle together — a shared goal, no ranks */
+const GOALS = [100, 250, 500, 1000, 2000, 5000, 10000, 25000, 50000, 100000];
+function CircleGoal({ c, cur }) {
+  const goal = GOALS.find((g) => g > c.items) || GOALS[GOALS.length - 1];
+  return (
+    <div className="cgoal">
+      <div className="small"><b>🪷 ಮಂಡಲದ {cur ? "ಈ ವಾರದ" : "ಕಳೆದ ವಾರದ"} ಒಟ್ಟು ಕಲಿಕೆ</b></div>
+      <div className="cgoal-n"><b>{c.items.toLocaleString("en-IN")}</b> ಹೊಸ ಪದ/ವಾಕ್ಯ/ಪಾಠ · {c.learners} ಸಾಧಕರು</div>
+      <div className="bprog" aria-hidden="true"><i style={{ width: `${Math.min(100, (100 * c.items) / goal)}%` }} /></div>
+      <div className="muted small">{cur ? `ಒಟ್ಟಾಗಿ ${goal.toLocaleString("en-IN")} ತಲುಪೋಣ — ನಿಮ್ಮ ಪ್ರತಿ ಪಾಠವೂ ಸೇರುತ್ತದೆ.` : `ಕಲಿಕೆಯ ದಿನಗಳು ಒಟ್ಟು ${c.days}`}</div>
     </div>
   );
 }
@@ -1131,13 +1559,15 @@ function Me({ api, setTab }) {
             .map(([v, l]) => <div key={l} className="stat"><b>{v}</b><span>{l}</span></div>)}
         </div>
 
+        <LevelCard s={s} />
+
         <div className="sec-t">ಸಾಧನೆಗಳು <span className="muted">— {s.badges.length} / {BADGES.length}</span></div>
         <p className="muted small">ಪಡೆದ ಸಾಧನೆ ಒತ್ತಿದರೆ ಹಂಚಿಕೊಳ್ಳಬಹುದು. ಬಾಕಿ ಇರುವುದನ್ನು ಒತ್ತಿದರೆ ಅದನ್ನು ಪಡೆಯುವ ಪಾಠಕ್ಕೆ ಹೋಗುತ್ತದೆ.</p>
         <div className="badges">
           {BADGES.map((b) => {
             const on = s.badges.includes(b.id);
             if (on) return (
-              <button type="button" key={b.id} className="badge on" onClick={() => api.share(shareBadge(b, s))}>
+              <button type="button" key={b.id} className="badge on" onClick={() => api.share(shareBadge(b, s), badgeCard(b))}>
                 <b>🏅 {b.t}</b><span>{b.d}</span></button>
             );
             const [done, need] = b.p(s);
@@ -1158,6 +1588,12 @@ function Me({ api, setTab }) {
           <label className="switch"><input type="checkbox" checked={s.showDeva} onChange={() => update({ showDeva: !s.showDeva })} /> ದೇವನಾಗರಿ ತೋರಿಸು</label>
           <p className="muted small">ಕನ್ನಡ ಲಿಪಿ ಸದಾ ಕಾಣುತ್ತದೆ.</p>
           <label className="switch"><input type="checkbox" checked={!!s.contrast} onChange={() => update({ contrast: !s.contrast })} /> ಹೆಚ್ಚು ಸ್ಪಷ್ಟ ಬಣ್ಣಗಳು (ಹೈ-ಕಾಂಟ್ರಾಸ್ಟ್)</label>
+          <label className="switch"><input type="checkbox" checked={s.haptics !== false} onChange={() => update({ haptics: s.haptics === false })} /> ಉತ್ತರಕ್ಕೆ ಸಣ್ಣ ಕಂಪನ (Android)</label>
+          <label className="switch"><input type="checkbox" checked={s.voice !== false} onChange={() => update({ voice: s.voice === false })} /> 🔊 ಪದವನ್ನು ಓದಿ ಕೇಳಿಸು (ಫೋನಿನಲ್ಲಿ ಕನ್ನಡ ಧ್ವನಿ ಇದ್ದರೆ)</label>
+          <p className="muted small">ಇದು ಫೋನಿನ ಯಂತ್ರ ಧ್ವನಿ; ಉಚ್ಚಾರಣೆ ಪೂರ್ತಿ ನಿಖರವಲ್ಲ. ಕನ್ನಡ ಲಿಪಿಯೇ ಮುಖ್ಯ ಮಾರ್ಗದರ್ಶಿ.</p>
+          <div className="muted small" style={{ marginTop: 12 }}>ಬಣ್ಣದ ಶೈಲಿ</div>
+          <div className="seg">{[["auto", "ಫೋನಿನಂತೆ"], ["light", "ಹಗಲು"], ["dark", "ರಾತ್ರಿ"]].map(([k, l]) => (
+            <button type="button" key={k} className={(s.theme || "auto") === k ? "on" : ""} aria-pressed={(s.theme || "auto") === k} onClick={() => update({ theme: k })}>{l}</button>))}</div>
           <div className="muted small" style={{ marginTop: 12 }}>ಅಕ್ಷರದ ಗಾತ್ರ</div>
           <div className="seg">{["ಸಣ್ಣ", "ಮಧ್ಯಮ", "ದೊಡ್ಡ"].map((l, i) => (
             <button type="button" key={i} className={s.fontStep === i ? "on" : ""} aria-pressed={s.fontStep === i} onClick={() => update({ fontStep: i })}>{l}</button>))}</div>
@@ -1168,7 +1604,8 @@ function Me({ api, setTab }) {
 
         <div className="sec-t">ದಿನನಿತ್ಯದ ನೆನಪು</div>
         <div className="card">
-          <p className="small">ಆ್ಯಪ್ ಇನ್ನೂ ತಾನಾಗಿ ನೆನಪಿಸುವುದಿಲ್ಲ. ಫೋನಿನ ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ದಿನನಿತ್ಯದ ನೆನಪು ಸೇರಿಸಿ, ಅಥವಾ ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ನಿಮಗೇ ಒಂದು ಸಂದೇಶ ಕಳಿಸಿ ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ.</p>
+          <PushCard api={api} time={remT} />
+          <p className="small">ಅಥವಾ ಫೋನಿನ ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ದಿನನಿತ್ಯದ ನೆನಪು ಸೇರಿಸಿ, ಇಲ್ಲವೇ ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ನಿಮಗೇ ಒಂದು ಸಂದೇಶ ಕಳಿಸಿ ಪಿನ್ ಮಾಡಿಕೊಳ್ಳಿ.</p>
           <div className="row"><label className="muted small" htmlFor="remT">ಸಮಯ</label><input id="remT" type="time" className="input" value={remT} onChange={(e) => setRemT(e.target.value)} /></div>
           <div className="row two">
             <a className="btn btn-solid small" href={reminderIcs(remT)} download="sanskrit-daily.ics">ಕ್ಯಾಲೆಂಡರ್‌ಗೆ ಸೇರಿಸಿ</a>
@@ -1211,6 +1648,44 @@ function Me({ api, setTab }) {
         <p className="muted center small">ಆವೃತ್ತಿ {VERSION}</p>
       </div>
     </>
+  );
+}
+
+/* gentle daily reminder — only if the learner turns it on; one a day, none once today's learning is done */
+function PushCard({ api, time }) {
+  const key = api.cloud.cfg?.pushKey;
+  const [p, setP] = useState(getPush());
+  const [busy, setBusy] = useState(false);
+  if (!key || !pushSupported()) return <p className="small muted">ಈ ಫೋನ್/ಬ್ರೌಸರ್‌ನಲ್ಲಿ ಆ್ಯಪ್ ತಾನಾಗಿ ನೆನಪಿಸಲು ಆಗುವುದಿಲ್ಲ. iPhone‌ನಲ್ಲಿ ಮೊದಲು ಆ್ಯಪ್ ಅನ್ನು ಮುಖಪುಟಕ್ಕೆ ಸೇರಿಸಿ.</p>;
+  const on = async () => {
+    setBusy(true);
+    try { await pushOn(key, time); setP(getPush()); api.flash(`ಪ್ರತಿದಿನ ${time} ಕ್ಕೆ ಒಂದು ಸೌಮ್ಯ ನೆನಪು ಬರುತ್ತದೆ 🌿`); }
+    catch (e) { api.flash(e.message === "denied" ? "ಸೂಚನೆಗಳಿಗೆ ಅನುಮತಿ ಸಿಗಲಿಲ್ಲ. ಫೋನಿನ ಸೆಟ್ಟಿಂಗ್‌ನಲ್ಲಿ ಅನುಮತಿ ಕೊಡಿ." : "ನೆನಪು ಹೊಂದಿಸಲು ಆಗಲಿಲ್ಲ. ಮತ್ತೊಮ್ಮೆ ಪ್ರಯತ್ನಿಸಿ."); }
+    setBusy(false);
+  };
+  const off = async () => { setBusy(true); await pushOff(); setP(null); setBusy(false); api.flash("ನೆನಪು ನಿಲ್ಲಿಸಲಾಗಿದೆ."); };
+  return (
+    <div className="pushbox">
+      <p className="small"><b>🔔 ಆ್ಯಪ್‌ನಿಂದ ದಿನಕ್ಕೊಂದು ನೆನಪು</b><br />{p ? `ಪ್ರತಿದಿನ ${p.time} ಕ್ಕೆ. ಆ ದಿನ ಈಗಾಗಲೇ ಕಲಿತಿದ್ದರೆ ಬರುವುದಿಲ್ಲ.` : "ಕೆಳಗಿನ ಸಮಯಕ್ಕೆ ದಿನಕ್ಕೆ ಒಂದೇ ಒಂದು ಸೌಮ್ಯ ನೆನಪು. ಆ ದಿನ ಕಲಿತಿದ್ದರೆ ಬರುವುದಿಲ್ಲ. ಯಾವಾಗ ಬೇಕಾದರೂ ನಿಲ್ಲಿಸಬಹುದು."}</p>
+      <div className="row two">
+        <Btn small disabled={busy} onClick={on}>{p ? "ಸಮಯ ಬದಲಿಸಿ" : "ನೆನಪು ಆರಂಭಿಸಿ"}</Btn>
+        {p && <Btn small kind="line" disabled={busy} onClick={off}>ನಿಲ್ಲಿಸಿ</Btn>}
+      </div>
+    </div>
+  );
+}
+
+/* level + streak shields */
+function LevelCard({ s }) {
+  const lv = levelOf(s.xp), sh = s.shields ?? 1;
+  return (
+    <div className="card levelcard">
+      <div className="plan-h"><div className="sec-t">ಸೋಪಾನ {lv.n} — {lv.t}</div><span className="lvl-p">⭐ {s.xp}</span></div>
+      <div className="bprog" aria-hidden="true"><i style={{ width: `${lv.pct}%` }} /></div>
+      <p className="muted small">{lv.to ? `ಮುಂದಿನ ಸೋಪಾನಕ್ಕೆ ಇನ್ನೂ ${lv.to - s.xp} ಅಂಕ` : "ಕೊನೆಯ ಸೋಪಾನ ತಲುಪಿದಿರಿ 🙏"} · ಅತಿ ದೀರ್ಘ ಸರಣಿ: {Math.max(s.bestStreak || 0, s.streak || 0)} ದಿನ</p>
+      <div className="shields">{Array.from({ length: MAX_SHIELDS }, (_, i) => <span key={i} className={i < sh ? "on" : ""}>🛡️</span>)}
+        <span className="small">ಸರಣಿ ರಕ್ಷೆ: ಒಂದು ದಿನ ಕಲಿಯಲು ಆಗದಿದ್ದರೆ ಸರಣಿ ಮುರಿಯದಂತೆ ಕಾಯುತ್ತದೆ. ಪ್ರತಿ 7 ದಿನದ ಸರಣಿಗೆ ಒಂದು ಉಚಿತ (ಗರಿಷ್ಠ {MAX_SHIELDS}).</span></div>
+    </div>
   );
 }
 
@@ -1296,13 +1771,37 @@ function Sheet({ children, close, label }) {
   );
 }
 
-function ShareSheet({ text, close, onShared, flash }) {
+function ShareSheet({ text, card, name, close, onShared, flash }) {
   const [t, setT] = useState(text);
+  const [img, setImg] = useState(null); // { blob, url }
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!card) return;
+    let live = true, url = null;
+    drawCard(card, name).then((blob) => { if (!live || !blob) return; url = URL.createObjectURL(blob); setImg({ blob, url }); }, () => {});
+    return () => { live = false; if (url) URL.revokeObjectURL(url); };
+  }, []);
+  const sendImg = async () => {
+    if (!img) return;
+    setBusy(true);
+    const r = await shareImage(img.blob, t);
+    setBusy(false);
+    if (r === "cancel") return;
+    flash(r === "shared" ? "ಹಂಚಿಕೊಂಡಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದ 🌿" : "ಚಿತ್ರ ಉಳಿಸಲಾಗಿದೆ. ವಾಟ್ಸಾಪ್‌ನಲ್ಲಿ ಕಳಿಸಿ 🌿");
+    onShared(); close();
+  };
   const copy = () => (navigator.clipboard?.writeText(t) || Promise.reject()).then(() => { flash("ನಕಲಾಗಿದೆ. ಗುಂಪಿನಲ್ಲಿ ಅಂಟಿಸಿ 🌿"); onShared(); close(); }, () => flash("ನಕಲಿಸಲು ಆಗಲಿಲ್ಲ. ಕೈಯಾರೆ ಆರಿಸಿ ನಕಲಿಸಿ."));
   return (
     <Sheet close={close} label="ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಿ">
       <div className="sheet-t">ಮಂಡಲದಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಿ</div>
       <p className="muted small">ಕಳಿಸುವ ಮೊದಲು ಬೇಕಾದರೆ ತಿದ್ದಬಹುದು. ಆ್ಯಪ್ ತಾನಾಗಿ ಏನನ್ನೂ ಕಳಿಸುವುದಿಲ್ಲ — ನೀವೇ ಕಳಿಸಬೇಕು.</p>
+      {card && (
+        <div className="imgshare">
+          {img ? <img src={img.url} alt="ಹಂಚಿಕೊಳ್ಳುವ ಚಿತ್ರ" /> : <div className="img-ph">ಚಿತ್ರ ಸಿದ್ಧವಾಗುತ್ತಿದೆ…</div>}
+          <Btn wide disabled={!img || busy} onClick={sendImg}>🖼️ ಚಿತ್ರವಾಗಿ ಹಂಚಿಕೊಳ್ಳಿ</Btn>
+          <div className="muted small center">ಅಥವಾ ಕೆಳಗಿನ ಸಂದೇಶವನ್ನು ಪಠ್ಯವಾಗಿ ಕಳಿಸಿ</div>
+        </div>
+      )}
       <textarea className="input share-box" value={t} onChange={(e) => setT(e.target.value)} rows={9} aria-label="ಸಂದೇಶ" />
       <div className="row two">
         <Btn kind="line" onClick={copy}>ನಕಲಿಸಿ</Btn>
@@ -1318,7 +1817,7 @@ function ReportSheet({ r, close, api }) {
   const send = () => {
     api.update((st) => ({ ...st, reports: [...st.reports.filter((x) => !(x.kind === r.kind && x.id === r.id)), { ...r, note: note.trim() || undefined, on: new Date().toISOString().slice(0, 10), at: Date.now() }] }));
     close();
-    if ("durg".includes(r.kind)) api.close(); // full-screen item just got hidden — leave it
+    if ("durghf".includes(r.kind)) api.close(); // full-screen item just got hidden — leave it
     api.flash("ತಿಳಿಸಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದ. ಪರಿಶೀಲಿಸುತ್ತೇವೆ 🙏");
   };
   return (
@@ -1360,5 +1859,5 @@ function Nav({ tab, setTab }) {
 const VIEWS = {
   l0: Level0, l1: Level1, lesson: Lesson, l2: Level2, squiz: SentenceQuiz, l3: Level3, dialogue: Dialogue,
   l4: Level4, grammar: GrammarLesson, gquiz: GrammarQuiz, l5: Level5, subhashita: Subhashita, uquiz: SubhashitaQuiz, l6: Level6, reading: Reading,
-  review: Review, flash: Flash, search: Search,
+  review: Review, flash: Flash, search: Search, speed: Speed, known: Known, trace: TraceView, shibira: ShibiraList, shibiraDay: ShibiraDay, fests: FestList, fest: Fest,
 };

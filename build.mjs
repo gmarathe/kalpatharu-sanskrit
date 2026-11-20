@@ -6,10 +6,13 @@ import crypto from "node:crypto";
 const out = "public";
 fs.mkdirSync(`${out}/fonts`, { recursive: true });
 
+fs.rmSync(`${out}/c`, { recursive: true, force: true });
 await build({
-  entryPoints: ["src/main.jsx"], bundle: true, minify: true, format: "iife",
-  outfile: `${out}/app.js`, jsx: "automatic", loader: { ".js": "jsx" },
-  define: { "process.env.NODE_ENV": '"production"' }, legalComments: "none", target: ["es2019"],
+  entryPoints: { app: "src/main.jsx" }, bundle: true, minify: true, format: "esm", splitting: true,
+  outdir: out, chunkNames: "c/[name]-[hash]", jsx: "automatic", loader: { ".js": "jsx" },
+  define: { "process.env.NODE_ENV": '"production"' }, legalComments: "none", target: ["es2020"],
+  // Preact (React-compatible, ~60 KB smaller) — faster first load on low-end phones
+  alias: { react: "preact/compat", "react-dom/client": "preact/compat/client", "react-dom": "preact/compat", "react/jsx-runtime": "preact/jsx-runtime" },
 });
 
 // Fonts (self-hosted so the app works offline)
@@ -26,7 +29,9 @@ for (const [n, p] of Object.entries(fonts)) fs.copyFileSync(p, `${out}/fonts/${n
 
 const css = fs.readFileSync("src/style.css", "utf8");
 const js = fs.readFileSync(`${out}/app.js`);
-const ver = crypto.createHash("sha1").update(js).update(css).digest("hex").slice(0, 10);
+const h = crypto.createHash("sha1").update(js).update(css);
+for (const f of fs.readdirSync(`${out}/c`).sort()) h.update(f);
+const ver = h.digest("hex").slice(0, 10);
 
 fs.writeFileSync(`${out}/index.html`, `<!DOCTYPE html>
 <html lang="kn">
@@ -51,10 +56,12 @@ fs.writeFileSync(`${out}/index.html`, `<!DOCTYPE html>
 <body>
 <div id="root"></div>
 <noscript>ಈ ಆ್ಯಪ್‌ಗೆ JavaScript ಬೇಕು.</noscript>
-<script src="/app.js?v=${ver}" defer></script>
+<script type="module" src="/app.js?v=${ver}"></script>
 </body>
 </html>
 `);
 
-fs.writeFileSync(`${out}/sw.js`, fs.readFileSync("src/sw.js", "utf8").replace("__VERSION__", ver));
+// the shared code chunk must be cached at install time, or the first offline open would fail (admin chunk is left out)
+const chunks = fs.readdirSync(`${out}/c`).filter((f) => !f.startsWith("admin")).map((f) => `/c/${f}`);
+fs.writeFileSync(`${out}/sw.js`, fs.readFileSync("src/sw.js", "utf8").replace("__VERSION__", ver).replace("__CHUNKS__", JSON.stringify(chunks)));
 console.log("built", ver, (js.length / 1024).toFixed(0) + " KB js");

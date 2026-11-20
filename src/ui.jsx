@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { pad3, shuffle, pick, tokens } from "./lib.js";
+import { buzz, Speak } from "./delight.jsx";
 
 export const FS = [0.86, 1, 1.2];
 
@@ -35,13 +36,14 @@ export function SrcLine({ item }) {
 }
 
 /* One Sanskrit item: Devanagari (optional) + Kannada script + meaning */
-export function ScriptCard({ item, p, split, tip, tag, onReport, onShare, compact, children }) {
+export function ScriptCard({ item, p, split, tip, tag, onReport, onShare, compact, children, kn, pic }) {
   const f = FS[p.fontStep] || 1;
   return (
     <div className={`card script${compact ? " compact" : ""}`}>
-      {tag && <div className="tag">{tag}</div>}
+      {(tag || kn) && <div className="tag-row">{tag && <div className="tag">{tag}</div>}{kn && <span className="knchip">ಕನ್ನಡದಲ್ಲೂ ಇದೆ ✓</span>}</div>}
+      {pic && <div className="wpic" aria-hidden="true">{pic}</div>}
       {p.showDeva && <div className="dev" style={{ fontSize: (compact ? 24 : 34) * f }}>{item.d}</div>}
-      <div className="kan" style={{ fontSize: (compact ? 22 : 30) * f }}>{item.k}</div>
+      <div className="kan" style={{ fontSize: (compact ? 22 : 30) * f }}>{item.k} <Speak text={item.k} small={compact} /></div>
       {split && <div className="split">{split}</div>}
       <div className="mean" style={{ fontSize: 17 * f }}>{item.m}</div>
       {tip && <div className="tip">💡 {tip}</div>}
@@ -215,7 +217,7 @@ function Mcq({ q, onDone }) {
       {q.options.map((o) => {
         const cls = picked ? (o === q.answer ? " right" : o === picked ? " wrong" : " dim") : "";
         return <button type="button" key={o} className={`opt${cls}`}
-          disabled={!!picked} onClick={() => setPicked(o)}>{o}</button>;
+          disabled={!!picked} onClick={() => { setPicked(o); buzz(o === q.answer ? "ok" : "bad"); }}>{o}</button>;
       })}
       {picked && (
         <div className="after">
@@ -236,8 +238,8 @@ function Match({ q, onDone }) {
   const [flash, setFlash] = useState(null);
   const tapRight = (pr) => {
     if (sel == null || done.includes(pr.id)) return;
-    if (pr.id === sel) { setDone([...done, sel]); setSel(null); }
-    else { setMissed((m) => [...new Set([...m, sel])]); setFlash(pr.id); setTimeout(() => setFlash(null), 450); }
+    if (pr.id === sel) { buzz("ok"); setDone([...done, sel]); setSel(null); }
+    else { buzz("bad"); setMissed((m) => [...new Set([...m, sel])]); setFlash(pr.id); setTimeout(() => setFlash(null), 450); }
   };
   const finished = done.length === q.pairs.length;
   return (
@@ -267,7 +269,7 @@ function Arrange({ q, p, onDone }) {
   const [chosen, setChosen] = useState([]);
   const [checked, setChecked] = useState(null);
   const left = q.items.filter((t) => !chosen.includes(t));
-  const check = () => setChecked(chosen.every((t, j) => t.i === j));
+  const check = () => { const ok = chosen.every((t, j) => t.i === j); buzz(ok ? "ok" : "bad"); setChecked(ok); };
   const correct = [...q.items].sort((a, b) => a.i - b.i);
   return (
     <>
@@ -314,7 +316,7 @@ function Fill({ q, p, onDone }) {
       </div>
       {q.options.map((o) => {
         const cls = picked ? (o === q.answer ? " right" : o === picked ? " wrong" : " dim") : "";
-        return <button type="button" key={o} className={`opt${cls}`} disabled={!!picked} onClick={() => setPicked(o)}>{o}</button>;
+        return <button type="button" key={o} className={`opt${cls}`} disabled={!!picked} onClick={() => { setPicked(o); buzz(o === q.answer ? "ok" : "bad"); }}>{o}</button>;
       })}
       {picked && (
         <div className="after">
@@ -332,10 +334,12 @@ export function Quiz({ qs, p, onGrade, onFinish, title, sub, onBack }) {
   const [i, setI] = useState(0);
   const [score, setScore] = useState(0);
   const [end, setEnd] = useState(qs.length === 0);
+  const [combo, setCombo] = useState(0);
   const next = (grades, ok) => {
     if (grades.length) onGrade(grades);
     const sc = score + (ok ? 1 : 0);
     setScore(sc);
+    setCombo(ok ? combo + 1 : 0);
     if (i + 1 >= qs.length) { setEnd(true); onFinish && onFinish(sc, qs.length); }
     else setI(i + 1);
   };
@@ -348,6 +352,7 @@ export function Quiz({ qs, p, onGrade, onFinish, title, sub, onBack }) {
       <Header title={title} sub={sub || `${i + 1} / ${qs.length}`} onBack={onBack} />
       <div className="pad">
         <Bar now={i + 1} total={qs.length} />
+        {combo >= 3 && <div className="combo" key={combo}>🔥 {combo} ಸತತ ಸರಿ</div>}
         <V key={i} q={q} p={p} onDone={next} />
       </div>
     </>

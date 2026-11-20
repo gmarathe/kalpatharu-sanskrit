@@ -24,6 +24,11 @@ const SCHEMA_SQL = [
      user_id TEXT PRIMARY KEY, words INTEGER, sentences INTEGER, dialogues INTEGER, grammar INTEGER,
      subhashitas INTEGER, readings INTEGER, xp INTEGER, streak INTEGER, last_day TEXT,
      ticks TEXT, updated_at INTEGER NOT NULL)`,
+  // v3.1 — daily reminder (Web Push): one row per phone that asked for it; no account needed
+  `CREATE TABLE IF NOT EXISTS push_subs (
+     endpoint TEXT PRIMARY KEY, slot INTEGER NOT NULL, done_day TEXT, sent_day TEXT, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS push_slot ON push_subs (slot)`,
+  `CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS activity_day ON activity (day)`,
   `CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id)`,
 ];
@@ -118,6 +123,9 @@ function cleanPhone(p) {
 }
 
 /* ── per-learner summary (for the dashboard) ─────────── */
+const progressKey = (st) => JSON.stringify([
+  ...["learned", "sentences", "dialogues", "grammar", "subhashitas", "readings"].map((k) => (Array.isArray(st[k]) ? st[k].length : 0)),
+  st.xp | 0, st.streak | 0, st.lastDay || null, st.challengeTicks || {}]);
 function progressRow(db, userId, st, t) {
   const n = (k) => (Array.isArray(st[k]) ? st[k].length : 0);
   const ticks = Object.fromEntries(Object.entries(st.challengeTicks || {}).sort((a, b) => b[0] - a[0]).slice(0, 4));
@@ -145,6 +153,9 @@ async function weekScores(db, wk) {
   const byUser = {};
   for (const a of acts) (byUser[a.user_id] ||= []).push(a);
   const out = new Map();
+  // the whole circle together this week: new items and learning days (cooperative goal, no ranks)
+  const circle = { items: 0, days: acts.length, learners: Object.keys(byUser).length };
+  for (const a of acts) circle.items += Math.max(0, Math.min(50, a.n | 0));
   for (const r of prog) {
     let ticks = null;
     try { ticks = JSON.parse(r.ticks || "{}")[wk] || null; } catch {}
@@ -152,7 +163,7 @@ async function weekScores(db, wk) {
     delete byUser[r.user_id];
   }
   for (const [uid, list] of Object.entries(byUser)) out.set(uid, { ...weekScore(list, null), ticks: 0 });
-  return { days, scores: out };
+  return { days, scores: out, circle };
 }
 
 const pickWeek = (url, today) => {
@@ -168,13 +179,13 @@ const boardCache = new Map();
 async function ranking(db, wk) {
   const hit = boardCache.get(wk);
   if (hit && now() - hit.at < 60e3) return hit;
-  const { days, scores } = await weekScores(db, wk);
+  const { days, scores, circle } = await weekScores(db, wk);
   const users = (await db.prepare("SELECT id, name, gname, board FROM users").all()).results;
   const ranked = users
     .map((u) => ({ id: u.id, name: (u.name || u.gname || "").trim(), board: !!u.board, ...(scores.get(u.id) || { pts: 0, days: 0 }) }))
     .filter((r) => r.pts > 0)
     .sort((a, b) => b.pts - a.pts || b.days - a.days || a.name.localeCompare(b.name));
-  const out = { at: now(), days, scores, ranked };
+  const out = { at: now(), days, scores, ranked, circle };
   boardCache.set(wk, out);
   if (boardCache.size > 8) boardCache.delete(boardCache.keys().next().value);
   return out;
@@ -183,10 +194,10 @@ async function ranking(db, wk) {
 async function board(db, url, me) {
   const today = dayNumIST();
   const wk = pickWeek(url, today);
-  const { days, scores, ranked } = await ranking(db, wk);
+  const { days, scores, ranked, circle } = await ranking(db, wk);
   const shown = ranked.filter((r) => r.board && r.name);
   const out = {
-    week: wk, days, isCurrent: wk === weekOf(today), learners: ranked.length,
+    week: wk, days, isCurrent: wk === weekOf(today), learners: ranked.length, circle,
     top: shown.slice(0, 10).map((r) => ({ name: r.name, pts: r.pts, days: r.days, me: !!me && r.id === me.id })),
     perfect: shown.filter((r) => r.days === 7).map((r) => r.name),
   };
@@ -208,7 +219,7 @@ async function adminSummary(db, url) {
 
   const today = dayNumIST(t);
   const wk = pickWeek(url, today);
-  const { days, scores } = await weekScores(db, wk);
+  const { days, scores, circle } = await weekScores(db, wk);
   const users = (await db.prepare(
     `SELECT u.id, u.email, u.name, u.gname, u.phone, u.board, u.created_at, u.last_seen,
             p.words, p.sentences, p.dialogues, p.grammar, p.subhashitas, p.readings, p.xp, p.streak, p.last_day
@@ -242,6 +253,88 @@ async function adminSummary(db, url) {
   return { week: wk, days, today: todayKey, isCurrent: wk === weekOf(today), totals, members };
 }
 
+/* ── daily reminder (Web Push, no payload) ─────────────
+   The Worker makes its own VAPID key pair once and keeps it in D1 (table kv) — nothing to configure.
+   A push carries no text; the service worker shows a fixed, gentle Kannada line. At most one a day,
+   only at the time the learner chose, and not at all if they have already learned that day. */
+const PUSH_HOSTS = /(^|\.)(fcm\.googleapis\.com|push\.apple\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
+const PUSH_CONTACT = "mailto:connect@kalpatharu.org";
+let vapidP = null;
+function vapid(db) {
+  if (!vapidP) vapidP = (async () => {
+    const row = await db.prepare("SELECT v FROM kv WHERE k = 'vapid'").first();
+    let saved = row ? JSON.parse(row.v) : null;
+    if (!saved) {
+      const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+      saved = { jwk: await crypto.subtle.exportKey("jwk", kp.privateKey), pub: b64u(await crypto.subtle.exportKey("raw", kp.publicKey)) };
+      await db.prepare("INSERT OR IGNORE INTO kv (k, v) VALUES ('vapid', ?)").bind(JSON.stringify(saved)).run();
+      const again = await db.prepare("SELECT v FROM kv WHERE k = 'vapid'").first(); // another isolate may have won the race
+      saved = JSON.parse(again.v);
+    }
+    const key = await crypto.subtle.importKey("jwk", saved.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+    return { key, pub: saved.pub };
+  })().catch((e) => { vapidP = null; throw e; });
+  return vapidP;
+}
+const enc = (o) => b64u(new TextEncoder().encode(JSON.stringify(o)));
+async function vapidAuth(db, endpoint) {
+  const { key, pub } = await vapid(db);
+  const head = enc({ typ: "JWT", alg: "ES256" }) + "." + enc({ aud: new URL(endpoint).origin, exp: Math.floor(now() / 1000) + 12 * 3600, sub: PUSH_CONTACT });
+  const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, new TextEncoder().encode(head));
+  return `vapid t=${head}.${b64u(sig)}, k=${pub}`;
+}
+const okEndpoint = (e) => { try { const u = new URL(e); return u.protocol === "https:" && PUSH_HOSTS.test(u.hostname) && e.length < 1000; } catch { return false; } };
+// "HH:MM" India time → quarter-hour slot 0..95
+const slotOf = (hhmm) => { const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || ""); if (!m) return null; const h = +m[1], mi = +m[2]; return h < 24 && mi < 60 ? h * 4 + Math.floor(mi / 15) : null; };
+
+async function pushRoutes(req, path, db) {
+  if (path === "/api/push/subscribe" && req.method === "POST") {
+    let b; try { b = await body(req); } catch { return fail(400, "bad_request"); }
+    const slot = slotOf(b.time);
+    if (!okEndpoint(b.endpoint) || slot == null) return fail(400, "bad_request");
+    await db.prepare(`INSERT INTO push_subs (endpoint, slot, created_at) VALUES (?, ?, ?)
+                      ON CONFLICT(endpoint) DO UPDATE SET slot = excluded.slot`).bind(b.endpoint, slot, now()).run();
+    return json({ ok: true });
+  }
+  if (path === "/api/push/unsubscribe" && req.method === "POST") {
+    let b; try { b = await body(req); } catch { return fail(400, "bad_request"); }
+    if (typeof b.endpoint === "string") await db.prepare("DELETE FROM push_subs WHERE endpoint = ?").bind(b.endpoint).run();
+    return json({ ok: true });
+  }
+  // the phone says "learned today" → no reminder today
+  if (path === "/api/push/done" && req.method === "POST") {
+    let b; try { b = await body(req); } catch { return fail(400, "bad_request"); }
+    if (typeof b.endpoint === "string") await db.prepare("UPDATE push_subs SET done_day = ? WHERE endpoint = ? AND (done_day IS NULL OR done_day <> ?)")
+      .bind(dayKeyOf(dayNumIST()), b.endpoint, dayKeyOf(dayNumIST())).run();
+    return json({ ok: true });
+  }
+  return null;
+}
+
+// every 15 minutes: this slot's phones that have not learned today (free plan: 50 outgoing calls a run → 45 at a time;
+// anyone left over is picked up by the next runs of the same hour)
+async function sendReminders(env) {
+  const db = env.DB;
+  if (!db) return;
+  await ensureSchema(db);
+  const t = now(), today = dayKeyOf(dayNumIST(t));
+  const mins = Math.floor(((t + IST) % 864e5) / 60000), slot = Math.floor(mins / 15);
+  const lo = Math.max(0, slot - 3);
+  const subs = (await db.prepare(
+    `SELECT endpoint FROM push_subs WHERE slot BETWEEN ? AND ? AND (done_day IS NULL OR done_day <> ?) AND (sent_day IS NULL OR sent_day <> ?) LIMIT 45`,
+  ).bind(lo, slot, today, today).all()).results;
+  if (!subs.length) return;
+  const stmts = [];
+  await Promise.all(subs.map(async ({ endpoint }) => {
+    try {
+      const r = await fetch(endpoint, { method: "POST", headers: { authorization: await vapidAuth(db, endpoint), ttl: "7200", urgency: "normal", "content-length": "0" } });
+      if (r.status === 404 || r.status === 410) stmts.push(db.prepare("DELETE FROM push_subs WHERE endpoint = ?").bind(endpoint));
+      else stmts.push(db.prepare("UPDATE push_subs SET sent_day = ? WHERE endpoint = ?").bind(today, endpoint));
+    } catch (e) { console.error("push", e); }
+  }));
+  if (stmts.length) await db.batch(stmts);
+}
+
 /* ── routes ──────────────────────────────────────────── */
 async function route(req, env) {
   const url = new URL(req.url);
@@ -249,12 +342,15 @@ async function route(req, env) {
   const clientId = env.GOOGLE_CLIENT_ID || "";
 
   if (path === "/api/config" && req.method === "GET") {
-    return json({ googleClientId: clientId, enabled: !!(clientId && env.DB) });
+    let pushKey = null;
+    if (env.DB) { try { await ensureSchema(env.DB); pushKey = (await vapid(env.DB)).pub; } catch (e) { console.error(e); } }
+    return json({ googleClientId: clientId, enabled: !!(clientId && env.DB), pushKey });
   }
   if (!env.DB) return fail(503, "no_db");
-  if (!clientId) return fail(503, "no_client_id");
   const db = env.DB;
   await ensureSchema(db);
+  if (path.startsWith("/api/push/")) { const r = await pushRoutes(req, path, db); if (r) return r; }
+  if (!clientId) return fail(503, "no_client_id");
 
   if (path === "/api/auth/google" && req.method === "POST") {
     let credential;
@@ -319,25 +415,33 @@ async function route(req, env) {
     const merged = mergeState(incoming, stored);
     merged.log = mergeLog(incoming.log, stored?.log);
     const t = now();
-    const stmts = [
-      db.prepare(`INSERT INTO states (user_id, json, updated_at) VALUES (?, ?, ?)
+    // D1 free plan allows 100k row writes a day — write only what really changed
+    const mergedJson = JSON.stringify(merged);
+    const stateChanged = !row || row.json !== mergedJson;
+    const stmts = [];
+    if (stateChanged) {
+      stmts.push(db.prepare(`INSERT INTO states (user_id, json, updated_at) VALUES (?, ?, ?)
                   ON CONFLICT(user_id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`)
-        .bind(u.id, JSON.stringify(merged), t),
+        .bind(u.id, mergedJson, t));
+      if (!stored || progressKey(stored) !== progressKey(merged)) stmts.push(progressRow(db, u.id, merged, t));
+    }
+    // last_seen: at most once an hour unless something changed
+    if (stateChanged || !u.last_seen || t - u.last_seen > 3600e3 || !u.name) stmts.push(
       db.prepare("UPDATE users SET last_seen = ?, name = COALESCE(NULLIF(name, ''), ?) WHERE id = ?")
-        .bind(t, (merged.name || "").slice(0, 60), u.id),
-      progressRow(db, u.id, merged, t),
-    ];
+        .bind(t, (merged.name || "").slice(0, 60), u.id));
     // only recent days count (a week back for offline phones, a day ahead for time zones) — old or future entries can't add points
     const today = dayNumIST(t);
     const lo = dayKeyOf(today - 7), hi = dayKeyOf(today + 1);
     for (const [day, v] of Object.entries(merged.log || {})) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < lo || day > hi) continue;
+      const was = stored?.log?.[day];
+      if (was && (was.n | 0) >= (v.n | 0) && (was.p ? 1 : 0) >= (v.p ? 1 : 0)) continue; // already on the server
       stmts.push(db.prepare(
         `INSERT INTO activity (user_id, day, n, p) VALUES (?, ?, ?, ?)
          ON CONFLICT(user_id, day) DO UPDATE SET n = MAX(n, excluded.n), p = MAX(p, excluded.p)`,
       ).bind(u.id, day, Math.max(0, Math.min(50, v.n | 0)), v.p ? 1 : 0));
     }
-    await db.batch(stmts);
+    if (stmts.length) await db.batch(stmts);
     return json({ state: merged, at: t });
   }
 
@@ -351,4 +455,5 @@ export default {
     try { return await route(req, env); }
     catch (e) { console.error(e); return fail(500, "server_error"); }
   },
+  async scheduled(event, env, ctx) { ctx.waitUntil(sendReminders(env)); },
 };
